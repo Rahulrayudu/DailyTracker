@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+sqlalchemy>=2.0.0
+alembic
+pydantic>=2.0.0
+ollama
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
