@@ -15,26 +15,58 @@ This is an actively developed single-user prototype. Implemented today:
 
 - Daily nutrition dashboard with date navigation and calories, protein,
   carbohydrates, fat, and fiber totals.
-- Food search, serving-size adjustment, and nutrition review before logging.
+- Food search with common Indian-name aliases, serving-size adjustment, and
+  nutrition review before logging.
+- Persistent favorite foods and a recently logged catalog-food list.
 - Manual food entry and AI-assisted food logging with a clarification and
   confirm-before-save flow.
 - Meal assignment and per-meal nutrition totals.
-- Profile targets, basic AI coach chat, and a basic AI workout planner.
+- A Profile tab for age, sex used by the BMR formula, height, current and
+  target weight, activity level, food preference, and daily routine in India
+  Standard Time.
+- Estimated BMR, maintenance calories, goal calories, BMI screening value, and
+  starter macro targets, plus a personalized seven-day calorie and activity
+  schedule.
+- Basic AI coach chat and workout planning.
+- Searchable exercise library, equipment-filtered workout templates, active
+  workout set logging, and recent workout history.
 - SQLite persistence, WAL mode, Alembic migrations, and local API health check.
 - Responsive Aurora Night visual theme.
 
 Still planned or incomplete:
 
-- Full IFCT and USDA food datasets, favorites, recent foods, saved meals, and
-  photo logging.
-- Water, weight, sleep, mood, steps, and other tracking modules.
-- Exercise templates, workout safety checks, and an interactive workout player.
+- Broader Indian recipe coverage, saved meals, and photo logging. An optional
+  offline USDA Foundation Foods importer is available.
+- Water and weight tracking are implemented. Sleep, mood, steps, and other
+  activity tracking remain planned.
+- Advanced workout progression, exercise demonstrations, and personalized
+  injury accommodations.
 - Meal planning, grocery lists, insights, reports, and reminders.
+- Trend-based calorie target adjustments and richer meal-planning guidance.
 - Authentication, installable/offline PWA support, scheduled backups, data
   export, and Mac auto-start configuration.
-- Automated backend and browser regression tests.
+- Core backend regression checks are added; automated browser regression
+  coverage remains planned.
 - Fitbit and Pixel Watch data sync through the Google Health API (final planned
   integration phase; not implemented yet).
+
+### Profile estimates and weekly activity plan
+
+The Profile tab uses the Mifflin–St Jeor equation to estimate resting energy
+needs, then applies the activity level selected by the user for a rough
+maintenance estimate. Weight-loss mode starts with a 15% estimated reduction,
+capped at 500 kcal/day. These are app heuristics for an initial conversation,
+not clinical prescriptions or promises about weight change. Macro grams are
+also starting estimates based on a 25/45/30 calorie split. The displayed BMI
+is a screening value, not a diagnosis.
+
+For a sedentary profile, the first week starts with shorter walks and suggests
+gradually building toward at least 150 minutes of moderate activity per week.
+Other activity levels receive five 30-minute aerobic sessions and two
+strength days. These targets follow the general adult activity guidance from
+the [CDC](https://www.cdc.gov/physical-activity-basics/guidelines/adults.html).
+The energy equation originates in the [Mifflin–St Jeor study](https://pubmed.ncbi.nlm.nih.gov/2305711/);
+individual energy needs can differ from equation estimates.
 
 ### Final planned phase: Google Health API / Fitbit sync
 
@@ -124,6 +156,33 @@ cd ..
 `frontend/package-lock.json` is committed so installs can be reproduced with
 `npm ci` after the first setup.
 
+### Optional: import USDA Foundation Foods
+
+The app can import USDA Foundation Foods into the local database. The importer
+uses an extracted official CSV release, keeps the FDC food ID and release label
+for provenance, imports values per 100 g, skips entries missing any core
+nutrient, and can be rerun to update the same FDC records. The dataset itself
+is not bundled in this repository. USDA FoodData Central data is CC0; USDA
+requests attribution, which the food picker displays for imported entries.
+
+1. Download the latest **Foundation Foods CSV** archive from the [USDA
+   download page](https://fdc.nal.usda.gov/download-datasets/) and extract it.
+2. Activate the backend virtual environment from the repository root, then run
+   the importer with the extracted directory and release label:
+
+   ```sh
+   source backend/.venv/bin/activate
+   python -m backend.import_usda_foundation \
+     "/path/to/extracted/Foundation_Foods_CSV" --version 2026-10
+   ```
+
+3. Restart the API if it is running. Imported foods are available through
+   regular local search; no USDA API key or network request is used by the app.
+
+The USDA Foundation dataset primarily covers ingredients, not a comprehensive
+catalog of Indian prepared recipes. The existing curated entries remain
+available alongside USDA entries.
+
 ## Run in development
 
 Open two terminal windows. Run both commands from the repository root unless
@@ -207,10 +266,11 @@ commit secrets or private configuration.
 ## Food catalog and AI behavior
 
 The API seeds a small starter food catalog at startup, including common foods
-and Indian meals. Search results show values per serving. Selecting a result
-opens a serving multiplier and nutrition preview; nothing is logged until you
-confirm. Use **Add manually** when you already know the values for a food that
-is not in the catalog.
+and Indian meals. Optionally imported USDA Foundation foods are shown per 100 g
+with their data source and release label. Selecting a result opens a serving
+multiplier and nutrition preview; nothing is logged until you confirm. Use
+**Add manually** when you already know the values for a food that is not in the
+catalog.
 
 For AI logging, describe a food and portion in the Log screen. The assistant
 may ask for a missing quantity or preparation detail. When it has enough
@@ -271,15 +331,21 @@ and data export tool are planned but not implemented yet.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/health` | API health check. |
-| `GET`, `POST` | `/profile` | Read or update the single profile and calculated targets. |
+| `GET`, `POST` | `/profile` | Read or update the profile, routine, and calculated health targets. |
+| `GET` | `/profile/weekly-plan` | Build the next seven days of calorie, meal-time, and activity guidance in IST. |
 | `GET` | `/search-food?q=...` | Search the local food catalog. |
+| `GET` | `/foods/favorites` | List favorite catalog foods. |
+| `PUT`, `DELETE` | `/foods/{id}/favorite` | Add or remove a favorite. |
+| `GET` | `/foods/recent` | List recently logged catalog foods. |
 | `POST` | `/ai/food-draft` | Request an AI clarification or reviewable nutrition draft. |
 | `GET` | `/ai/parse-live?text=...` | Return live food/quantity chips for the input. |
 | `GET`, `POST`, `DELETE` | `/logs` and `/logs/{id}` | Read, create, or delete health logs. `GET /logs` accepts `date_filter=YYYY-MM-DD`. |
 | `GET` | `/summary?date_filter=YYYY-MM-DD` | Return daily macro totals and per-meal totals. |
 | `GET` | `/exercises` | Read the seeded exercise library. |
+| `GET` | `/workouts/templates?equipment=...` | Read equipment-matched workout templates. |
 | `POST` | `/workouts/plan` | Generate an AI workout plan. |
-| `POST` | `/workouts/log` | Save a workout session. |
+| `POST` | `/workouts/log` | Save a workout session and completed sets. |
+| `GET` | `/workouts/sessions` | Read recent workout history and sets. |
 | `POST` | `/coach/chat` | Send a message to the AI coach. |
 
 FastAPI's interactive documentation at `/docs` is the source of truth for
@@ -327,15 +393,27 @@ npm run build
 ```
 
 Automated test suites, lint/format configuration, and browser smoke tests are
-not set up yet.
+not yet complete. Run the backend API regression checks from the repository
+root with:
+
+```sh
+python -m unittest discover -s backend/tests -v
+```
+
+These checks use an isolated in-memory SQLite database and do not touch your
+project database.
 
 ## Roadmap
 
 1. Improve nutrition database coverage and food logging workflows.
-2. Add water and weight tracking to the daily dashboard.
-3. Expand exercises, workout templates, safety validation, and workout player.
+2. Complete tracking with sleep, mood, and activity metrics (water and weight
+   logging are already implemented).
+3. Add workout progression, exercise demonstrations, and more personalized
+   accommodations.
 4. Add guarded coach actions, meal planning, and grocery lists.
 5. Build nutrition and activity insights and reports.
 6. Add local authentication, backup/export automation, and Mac launch-at-login.
 7. Add PWA/offline support, accessibility polish, and automated regression
    coverage.
+8. Integrate Fitbit and Pixel Watch data through the Google Health API with
+   explicit OAuth consent and local storage.

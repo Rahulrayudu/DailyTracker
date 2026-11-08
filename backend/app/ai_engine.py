@@ -102,7 +102,13 @@ Return only the required JSON object."""
 
     async def analyze_trends(self, prompt_text):
         try:
-            response = ollama.chat(model=self.model_name, messages=[{'role': 'user', 'content': prompt_text}])
+            response = await asyncio.to_thread(
+                ollama.chat,
+                model=self.model_name,
+                messages=[{'role': 'user', 'content': prompt_text}],
+                options={"num_predict": 700},
+                keep_alive="10m",
+            )
             return response['message']['content']
         except Exception as e:
             return f"Coach is currently updating its knowledge base... (Error: {str(e)})"

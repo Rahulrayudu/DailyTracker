@@ -45,6 +45,315 @@ const MacroCard = ({ label, value, target, unit, color, icon }) => {
   );
 };
 
+const DEFAULT_PROFILE_FORM = {
+  age: '', sex: 'male', height: '', weight: '', activity_level: 'sedentary',
+  diet_type: 'non-veg', goal: 'maintain', target_weight_kg: '',
+  routine_timezone: 'Asia/Kolkata', wake_time: '06:30', work_start_time: '09:00',
+  work_end_time: '18:00', breakfast_time: '08:00', lunch_time: '13:00',
+  snack_time: '16:30', dinner_time: '20:00', sleep_time: '22:30',
+};
+
+const profileToForm = (profile) => {
+  if (!profile) return { ...DEFAULT_PROFILE_FORM };
+  const asTime = (value, fallback) => value ? String(value).slice(0, 5) : fallback;
+  return {
+    ...DEFAULT_PROFILE_FORM,
+    age: profile.age ?? '',
+    sex: profile.sex === 'female' ? 'female' : 'male',
+    height: profile.height ?? '',
+    weight: profile.weight ?? '',
+    activity_level: ['sedentary', 'light', 'moderate', 'active', 'very_active'].includes(profile.activity_level) ? profile.activity_level : 'sedentary',
+    diet_type: ['veg', 'eggetarian', 'non-veg', 'vegan'].includes(profile.diet_type) ? profile.diet_type : 'non-veg',
+    goal: ['lose', 'maintain', 'gain'].includes(profile.goal) ? profile.goal : 'maintain',
+    target_weight_kg: profile.target_weight_kg ?? '',
+    routine_timezone: 'Asia/Kolkata',
+    wake_time: asTime(profile.wake_time, DEFAULT_PROFILE_FORM.wake_time),
+    work_start_time: asTime(profile.work_start_time, DEFAULT_PROFILE_FORM.work_start_time),
+    work_end_time: asTime(profile.work_end_time, DEFAULT_PROFILE_FORM.work_end_time),
+    breakfast_time: asTime(profile.breakfast_time, DEFAULT_PROFILE_FORM.breakfast_time),
+    lunch_time: asTime(profile.lunch_time, DEFAULT_PROFILE_FORM.lunch_time),
+    snack_time: asTime(profile.snack_time, DEFAULT_PROFILE_FORM.snack_time),
+    dinner_time: asTime(profile.dinner_time, DEFAULT_PROFILE_FORM.dinner_time),
+    sleep_time: asTime(profile.sleep_time, DEFAULT_PROFILE_FORM.sleep_time),
+  };
+};
+
+function suggestRoutineMealTimes(form) {
+  const toMinutes = value => {
+    const [hours, minutes] = String(value || '00:00').split(':').map(Number);
+    return (hours * 60) + minutes;
+  };
+  const asTime = value => {
+    const normalized = ((Math.round(value) % 1440) + 1440) % 1440;
+    return `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`;
+  };
+  const between = (value, minimum, maximum) => maximum < minimum
+    ? Math.max(0, Math.min(value, maximum))
+    : Math.max(minimum, Math.min(value, maximum));
+
+  const wake = toMinutes(form.wake_time);
+  let bedtime = toMinutes(form.sleep_time);
+  if (bedtime <= wake) bedtime += 1440;
+  let workStart = toMinutes(form.work_start_time);
+  if (workStart < wake) workStart += 1440;
+  let workEnd = toMinutes(form.work_end_time);
+  while (workEnd <= workStart) workEnd += 1440;
+
+  const breakfast = between(wake + 60, wake + 30, bedtime - 180);
+  const lunch = between((workStart + workEnd) / 2, breakfast + 180, bedtime - 180);
+  const dinner = between(Math.max(workEnd + 60, bedtime - 180), lunch + 180, bedtime - 60);
+  const snack = between((lunch + dinner) / 2, lunch + 90, dinner - 60);
+
+  return {
+    breakfast_time: asTime(breakfast),
+    lunch_time: asTime(lunch),
+    snack_time: asTime(snack),
+    dinner_time: asTime(dinner),
+  };
+}
+
+function InsightsTab({ data, loading, days, onDaysChange }) {
+  const daily = data?.daily || [];
+  const summary = data?.summary || {};
+  const chartWidth = 760;
+  const chartHeight = 250;
+  const chartLeft = 48;
+  const chartRight = 18;
+  const chartTop = 22;
+  const chartBottom = 34;
+  const plotHeight = chartHeight - chartTop - chartBottom;
+  const plotWidth = chartWidth - chartLeft - chartRight;
+  const calorieMaximum = Math.max(summary.calorie_target || 0, ...daily.map(day => day.calories || 0), 1000) * 1.15;
+  const calorieY = value => chartTop + plotHeight - (Math.min(value, calorieMaximum) / calorieMaximum) * plotHeight;
+  const barStep = daily.length ? plotWidth / daily.length : plotWidth;
+  const labelEvery = daily.length > 14 ? 5 : daily.length > 7 ? 3 : 1;
+  const dateIndex = new Map(daily.map((day, index) => [day.date, index]));
+  const weights = data?.weight_series || [];
+  const weightValues = weights.map(item => item.weight_kg);
+  const weightMin = weightValues.length ? Math.min(...weightValues) - 0.5 : 0;
+  const weightMax = weightValues.length ? Math.max(...weightValues) + 0.5 : 1;
+  const weightPoints = weights.map(item => {
+    const index = dateIndex.get(item.date) ?? 0;
+    const x = chartLeft + index * barStep + barStep / 2;
+    const y = chartTop + plotHeight - ((item.weight_kg - weightMin) / (weightMax - weightMin || 1)) * plotHeight;
+    return { x, y, item };
+  });
+  const caloriesLogged = daily.some(day => day.calories > 0);
+
+  return (
+    <div className="space-y-8">
+      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div><p className="text-xs font-bold uppercase tracking-[.22em] text-green-600">Patterns over time</p><h2 className="mt-2 text-3xl font-extrabold tracking-tight">Your insights</h2><p className="mt-2 text-sm text-slate-400">Nutrition, weigh-ins and workouts from your local logs, grouped by India Standard Time.</p></div>
+        <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Look back
+          <select value={days} onChange={event => onDaysChange(Number(event.target.value))} className="ml-3 rounded-xl border border-slate-200 px-3 py-2 text-sm normal-case">
+            <option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option>
+          </select>
+        </label>
+      </div>
+
+      {loading ? <div className="glass-card animate-pulse p-10 text-center text-sm text-slate-400">Gathering your recent activity…</div> : (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="glass-card p-5"><p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">Average logged calories</p><p className="mt-3 text-3xl font-extrabold text-orange-300">{summary.average_calories || 0}<span className="ml-2 text-xs text-slate-500">kcal/day</span></p><p className="mt-2 text-xs text-slate-500">Across {summary.logged_days || 0} logged days</p></div>
+            <div className="glass-card p-5"><p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">Calorie target</p><p className="mt-3 text-3xl font-extrabold text-emerald-300">{summary.calorie_target || 0}<span className="ml-2 text-xs text-slate-500">kcal/day</span></p><p className="mt-2 text-xs text-slate-500">Set from your Profile</p></div>
+            <div className="glass-card p-5"><p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">Goal days</p><p className="mt-3 text-3xl font-extrabold">{summary.goal_days || 0}<span className="ml-2 text-xs text-slate-500">/ {summary.logged_days || 0}</span></p><p className="mt-2 text-xs text-slate-500">{summary.goal_label || 'Log nutrition to track your goal'}</p></div>
+            <div className="glass-card p-5"><p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">Workouts</p><p className="mt-3 text-3xl font-extrabold text-violet-300">{summary.workout_minutes || 0}<span className="ml-2 text-xs text-slate-500">minutes</span></p><p className="mt-2 text-xs text-slate-500">{summary.workout_count || 0} sessions in this period</p></div>
+          </div>
+
+          <section className="glass-card p-5 md:p-7">
+            <div className="mb-5 flex flex-wrap items-end justify-between gap-3"><div><h3 className="text-lg font-extrabold">Calories by day</h3><p className="mt-1 text-xs text-slate-500">The line marks your current profile target. Empty days are not counted as zero intake.</p></div><span className="text-xs font-semibold text-orange-300">Orange bars · intake</span></div>
+            {caloriesLogged ? <div className="w-full overflow-x-auto"><svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="min-w-[640px] w-full" role="img" aria-label="Daily calories compared with your target">
+              <title>Daily calories compared with your calorie target</title>
+              {[0, 0.5, 1].map(tick => { const y = chartTop + plotHeight * tick; return <g key={tick}><line x1={chartLeft} x2={chartWidth - chartRight} y1={y} y2={y} stroke="rgba(255,255,255,.09)"/><text x={chartLeft - 8} y={y + 4} textAnchor="end" fill="#8490AA" fontSize="10">{Math.round(calorieMaximum * (1 - tick))}</text></g>; })}
+              {summary.calorie_target > 0 && <><line x1={chartLeft} x2={chartWidth - chartRight} y1={calorieY(summary.calorie_target)} y2={calorieY(summary.calorie_target)} stroke="#34F5C5" strokeWidth="2" strokeDasharray="6 5"/><text x={chartWidth - chartRight} y={calorieY(summary.calorie_target) - 7} textAnchor="end" fill="#34F5C5" fontSize="10">Target {summary.calorie_target}</text></>}
+              {daily.map((day, index) => {
+                const width = Math.max(3, barStep * 0.58);
+                const height = day.calories > 0 ? Math.max(2, chartTop + plotHeight - calorieY(day.calories)) : 0;
+                const x = chartLeft + index * barStep + (barStep - width) / 2;
+                const label = days > 14 ? day.date.slice(8) : day.day;
+                return <g key={day.date}><rect x={x} y={chartTop + plotHeight - height} width={width} height={height} rx="4" fill={day.calories ? 'url(#calorieBar)' : 'transparent'} opacity=".92"><title>{day.date}: {day.calories ? `${Math.round(day.calories)} kcal` : 'no food logged'}</title></rect>{index % labelEvery === 0 && <text x={x + width / 2} y={chartHeight - 10} textAnchor="middle" fill="#8490AA" fontSize="9">{label}</text>}</g>;
+              })}
+              <defs><linearGradient id="calorieBar" x1="0" x2="0" y1="0" y2="1"><stop stopColor="#FFB36B"/><stop offset="1" stopColor="#FF765D"/></linearGradient></defs>
+            </svg></div> : <p className="rounded-xl bg-slate-900/40 p-8 text-center text-sm text-slate-400">No food entries in this period yet. Log meals on Home to start the trend.</p>}
+          </section>
+
+          <div className="grid gap-6 xl:grid-cols-[1.2fr_.8fr]">
+            <section className="glass-card p-5 md:p-7">
+              <div className="mb-5 flex items-end justify-between gap-3"><div><h3 className="text-lg font-extrabold">Weight trend</h3><p className="mt-1 text-xs text-slate-500">Only days with a weigh-in are plotted.</p></div>{summary.weight_change_kg != null && <span className={`text-sm font-extrabold ${summary.weight_change_kg <= 0 ? 'text-emerald-300' : 'text-amber-300'}`}>{summary.weight_change_kg > 0 ? '+' : ''}{summary.weight_change_kg.toFixed(1)} kg</span>}</div>
+              {weightPoints.length >= 2 ? <div className="w-full overflow-x-auto"><svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="min-w-[540px] w-full" role="img" aria-label="Weight trend from recorded weigh-ins">
+                <title>Weight trend</title>
+                {[0, 0.5, 1].map(tick => { const y = chartTop + plotHeight * tick; const value = weightMax - ((weightMax - weightMin) * tick); return <g key={tick}><line x1={chartLeft} x2={chartWidth - chartRight} y1={y} y2={y} stroke="rgba(255,255,255,.09)"/><text x={chartLeft - 8} y={y + 4} textAnchor="end" fill="#8490AA" fontSize="10">{value.toFixed(1)}</text></g>; })}
+                <polyline points={weightPoints.map(point => `${point.x},${point.y}`).join(' ')} fill="none" stroke="#34F5C5" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round"/>
+                {weightPoints.map(point => <g key={`${point.item.date}-${point.x}`}><circle cx={point.x} cy={point.y} r="5" fill="#34F5C5" stroke="#08111D" strokeWidth="2"><title>{point.item.date}: {point.item.weight_kg} kg</title></circle></g>)}
+                {daily.map((day, index) => index % labelEvery === 0 && <text key={day.date} x={chartLeft + index * barStep + barStep / 2} y={chartHeight - 10} textAnchor="middle" fill="#8490AA" fontSize="9">{days > 14 ? day.date.slice(8) : day.day}</text>)}
+              </svg></div> : <p className="rounded-xl bg-slate-900/40 p-8 text-center text-sm text-slate-400">Add at least two weigh-ins in Home to see a trend line.</p>}
+            </section>
+
+            <section className="glass-card p-5 md:p-7">
+              <h3 className="text-lg font-extrabold">Daily check-in</h3><p className="mt-1 text-xs text-slate-500">Recent days · IST</p>
+              <div className="mt-4 max-h-[330px] space-y-2 overflow-y-auto pr-1">
+                {[...daily].reverse().map(day => <div key={day.date} className="flex items-center justify-between gap-3 rounded-xl border border-white/5 bg-slate-900/30 px-3 py-3">
+                  <div className="min-w-0"><p className="text-xs font-bold">{new Date(`${day.date}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</p><p className="mt-1 truncate text-[10px] text-slate-500">{day.workout_count ? `${day.workout_count} workout · ${day.workout_minutes} min` : day.water_ml ? `${(day.water_ml / 1000).toFixed(1)} L water` : 'No activity logged'}</p></div>
+                  <span className="shrink-0 text-xs font-extrabold text-orange-300">{day.calories ? `${Math.round(day.calories)} kcal` : '—'}</span>
+                </div>)}
+              </div>
+              <div className="mt-4 rounded-xl bg-slate-900/40 p-4"><p className="text-[10px] uppercase tracking-wider text-slate-500">Average water on logged days</p><p className="mt-1 text-lg font-extrabold text-cyan-300">{summary.average_water_ml ? `${(summary.average_water_ml / 1000).toFixed(2)} L/day` : 'No water logs yet'}</p></div>
+            </section>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+const ProfileField = ({ label, children, hint }) => (
+  <label className="block space-y-2 text-xs font-bold uppercase tracking-wide text-slate-400">
+    <span>{label}</span>
+    {children}
+    {hint && <span className="block normal-case font-medium tracking-normal text-slate-500">{hint}</span>}
+  </label>
+);
+
+function ProfileTab({ form, updateField, profile, weeklyPlan, planLoading, saving, onSave, onSuggestTimes }) {
+  const inputClass = 'w-full rounded-xl border border-slate-200 px-3 py-3 text-sm';
+  const numberField = (name, label, props = {}) => (
+    <ProfileField key={name} label={label}>
+      <input className={inputClass} type="number" value={form[name]} onChange={event => updateField(name, event.target.value)} {...props} />
+    </ProfileField>
+  );
+  const timeField = (name, label) => (
+    <ProfileField key={name} label={label}>
+      <input className={inputClass} type="time" value={form[name]} onChange={event => updateField(name, event.target.value)} />
+    </ProfileField>
+  );
+
+  return (
+    <div className="space-y-8">
+      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[.22em] text-green-600">Personal health plan · IST</p>
+          <h2 className="mt-2 text-3xl font-extrabold tracking-tight">Profile & routine</h2>
+          <p className="mt-2 max-w-2xl text-sm text-slate-400">Add your measurements, goal and usual schedule. The app uses them to estimate daily targets and shape a practical starter week.</p>
+        </div>
+        <button onClick={onSave} disabled={saving} className="rounded-xl bg-green-500 px-6 py-3 text-sm font-extrabold text-slate-950 disabled:opacity-60">
+          {saving ? 'Saving profile…' : profile ? 'Save changes' : 'Build my plan'}
+        </button>
+      </div>
+
+      <section className="grid gap-6 xl:grid-cols-[1.1fr_.9fr]">
+        <div className="glass-card p-6 md:p-8">
+          <div className="mb-6">
+            <h3 className="text-lg font-extrabold">About you and your goal</h3>
+            <p className="mt-1 text-xs text-slate-500">Measurements are used for estimates only. Update your weight as it changes.</p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {numberField('age', 'Age', { min: 18, max: 100, step: 1, placeholder: 'e.g. 30', required: true })}
+            <ProfileField label="BMR formula input">
+              <select className={inputClass} value={form.sex} onChange={event => updateField('sex', event.target.value)}>
+                <option value="male">Male</option><option value="female">Female</option>
+              </select>
+              <span className="block normal-case font-medium tracking-normal text-slate-500">Used only by the BMR estimate.</span>
+            </ProfileField>
+            {numberField('height', 'Height (cm)', { min: 101, max: 250, step: 0.1, placeholder: 'e.g. 170', required: true })}
+            {numberField('weight', 'Current weight (kg)', { min: 30, max: 350, step: 0.1, placeholder: 'e.g. 72', required: true })}
+            <ProfileField label="Goal">
+              <select className={inputClass} value={form.goal} onChange={event => updateField('goal', event.target.value)}>
+                <option value="lose">Lose weight</option><option value="maintain">Maintain weight</option><option value="gain">Gain weight</option>
+              </select>
+            </ProfileField>
+            {numberField('target_weight_kg', form.goal === 'lose' ? 'Target weight (kg) · required' : 'Target weight (kg) · optional', { min: 20, max: 350, step: 0.1, placeholder: form.goal === 'lose' ? 'Set your target' : 'Optional' })}
+            <ProfileField label="Usual activity level">
+              <select className={inputClass} value={form.activity_level} onChange={event => updateField('activity_level', event.target.value)}>
+                <option value="sedentary">Mostly sitting / desk work</option><option value="light">Light activity 1–3 days/week</option>
+                <option value="moderate">Moderate activity 3–5 days/week</option><option value="active">Hard exercise 6–7 days/week</option>
+                <option value="very_active">Very active job or training</option>
+              </select>
+            </ProfileField>
+            <ProfileField label="Food preference">
+              <select className={inputClass} value={form.diet_type} onChange={event => updateField('diet_type', event.target.value)}>
+                <option value="veg">Vegetarian</option><option value="eggetarian">Eggetarian</option><option value="non-veg">Non-vegetarian</option><option value="vegan">Vegan</option>
+              </select>
+            </ProfileField>
+          </div>
+        </div>
+
+        <div className="glass-card p-6 md:p-8">
+          <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+            <div><h3 className="text-lg font-extrabold">Daily routine</h3><p className="mt-1 text-xs text-slate-500">All times use India Standard Time (IST).</p></div>
+            <div className="flex items-center gap-2"><span className="rounded-full border border-green-400/20 bg-green-400/10 px-3 py-1 text-[10px] font-extrabold tracking-wider text-green-500">ASIA / KOLKATA</span><button type="button" onClick={onSuggestTimes} className="rounded-lg border border-white/10 px-3 py-2 text-[11px] font-bold text-emerald-300">Suggest meal times</button></div>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {timeField('wake_time', 'Wake up')}
+            {timeField('sleep_time', 'Bedtime')}
+            {timeField('work_start_time', 'Work starts')}
+            {timeField('work_end_time', 'Work ends')}
+            {timeField('breakfast_time', 'Breakfast')}
+            {timeField('lunch_time', 'Lunch')}
+            {timeField('snack_time', 'Snack')}
+            {timeField('dinner_time', 'Dinner')}
+          </div>
+          <p className="mt-5 rounded-xl bg-slate-900/40 p-4 text-xs leading-relaxed text-slate-400">Meal times update automatically when wake, work or bedtime changes. You can edit any meal time afterward; use “Suggest meal times” to apply the schedule again. Meal timing is flexible—adjust it to fit your appetite, work and culture.</p>
+        </div>
+      </section>
+
+      {profile ? (
+        <>
+          <section>
+            <div className="mb-4 flex items-end justify-between gap-4"><div><h3 className="text-xl font-extrabold">Estimated daily targets</h3><p className="mt-1 text-xs text-slate-500">Recalculate by saving when your measurements or activity change.</p></div><span className="text-xs font-semibold text-slate-500">Starting estimates</span></div>
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              {[
+                { label: 'BMR · resting estimate', value: profile.bmr, unit: 'kcal/day', tone: 'text-violet-300' },
+                { label: 'Maintenance estimate', value: profile.maintenance_calories, unit: 'kcal/day', tone: 'text-sky-300' },
+                { label: 'Daily goal target', value: profile.calorie_target, unit: 'kcal/day', tone: 'text-emerald-300' },
+                { label: 'BMI · screening value', value: profile.bmi, unit: '', tone: 'text-amber-300' },
+              ].map(metric => <div key={metric.label} className="glass-card p-5"><p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">{metric.label}</p><p className={`mt-3 text-3xl font-extrabold ${metric.tone}`}>{metric.value == null ? '—' : Number(metric.value).toFixed(metric.label.startsWith('BMI') ? 1 : 0)}<span className="ml-2 text-xs font-semibold text-slate-500">{metric.unit}</span></p></div>)}
+            </div>
+            <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_1fr]">
+              <div className="glass-card p-5">
+                <p className="text-xs font-extrabold uppercase tracking-wider text-slate-500">Goal progress</p>
+                <p className="mt-3 text-sm text-slate-300">Current <b className="text-white">{Number(profile.weight).toFixed(1)} kg</b>{profile.target_weight_kg ? <> → target <b className="text-white">{Number(profile.target_weight_kg).toFixed(1)} kg</b></> : ' · no target weight set'}{profile.weight_to_goal_kg != null && <> · <b className="text-emerald-300">{Number(profile.weight_to_goal_kg).toFixed(1)} kg</b> to goal</>}</p>
+                <p className="mt-2 text-xs text-slate-500">{profile.goal === 'lose' ? `Estimated daily reduction from maintenance: ${profile.daily_deficit || 0} kcal.` : profile.goal === 'gain' ? 'Small estimated surplus above maintenance.' : 'Daily target is set to estimated maintenance.'}</p>
+              </div>
+              <div className="glass-card p-5">
+                <p className="text-xs font-extrabold uppercase tracking-wider text-slate-500">Starting macro targets</p>
+                <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold"><span className="rounded-lg bg-emerald-400/10 px-3 py-2 text-emerald-300">Protein {Number(profile.protein_target || 0).toFixed(0)} g</span><span className="rounded-lg bg-sky-400/10 px-3 py-2 text-sky-300">Carbs {Number(profile.carb_target || 0).toFixed(0)} g</span><span className="rounded-lg bg-amber-400/10 px-3 py-2 text-amber-300">Fat {Number(profile.fat_target || 0).toFixed(0)} g</span></div>
+                <p className="mt-2 text-xs text-slate-500">Approximate 25/45/30 calorie split; personal needs can differ.</p>
+              </div>
+            </div>
+            <p className="mt-4 text-xs leading-relaxed text-slate-500">BMR uses the Mifflin–St Jeor equation; maintenance applies an activity multiplier. These are population-based estimates, not a diagnosis or a guaranteed rate of change. BMI is a screening measure and may not reflect body composition. For medical conditions, pregnancy, medication changes or a tailored target, work with a qualified clinician or dietitian.</p>
+          </section>
+
+          <section className="glass-card p-6 md:p-8">
+            <div className="mb-6 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+              <div><p className="text-xs font-bold uppercase tracking-[.18em] text-green-500">Next 7 days · IST</p><h3 className="mt-2 text-xl font-extrabold">Your starter week</h3></div>
+              {weeklyPlan?.activity_summary && <p className="max-w-xl text-xs leading-relaxed text-slate-400">{weeklyPlan.activity_summary.guidance}</p>}
+            </div>
+            {planLoading ? <div className="animate-pulse rounded-xl bg-slate-700/30 p-8 text-center text-sm text-slate-400">Building your week…</div> : weeklyPlan ? (
+              <>
+                <div className="mb-5 grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-xl bg-slate-900/40 p-4"><p className="text-[10px] uppercase tracking-wider text-slate-500">Daily calorie target</p><p className="mt-1 text-lg font-extrabold text-emerald-300">{weeklyPlan.days?.[0]?.calories || 0} kcal</p></div>
+                  <div className="rounded-xl bg-slate-900/40 p-4"><p className="text-[10px] uppercase tracking-wider text-slate-500">Planned aerobic activity</p><p className="mt-1 text-lg font-extrabold">{weeklyPlan.activity_summary.aerobic_minutes} min</p></div>
+                  <div className="rounded-xl bg-slate-900/40 p-4"><p className="text-[10px] uppercase tracking-wider text-slate-500">Strength sessions</p><p className="mt-1 text-lg font-extrabold">{weeklyPlan.activity_summary.strength_sessions} days</p></div>
+                </div>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  {weeklyPlan.days?.map(day => <div key={day.date} className="flex flex-col justify-between gap-3 rounded-xl border border-white/10 bg-slate-900/30 p-4 sm:flex-row sm:items-center">
+                    <div><p className="text-sm font-extrabold">{day.day} <span className="ml-2 text-xs font-medium text-slate-500">{new Date(`${day.date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span></p><p className="mt-1 text-xs text-emerald-300">{day.activity}{day.aerobic_minutes ? ` · ${day.aerobic_minutes} min` : ''}{day.strength_minutes ? ` · ${day.strength_minutes} min strength` : ''}</p><p className="mt-1 text-xs text-slate-500">{day.focus}</p></div>
+                    <span className="shrink-0 rounded-lg bg-white/5 px-3 py-2 text-xs font-bold">{day.calories} kcal</span>
+                  </div>)}
+                </div>
+                <div className="mt-6 grid gap-5 lg:grid-cols-2">
+                  <div><p className="mb-3 text-xs font-extrabold uppercase tracking-wider text-slate-500">Meal reminders</p><div className="flex flex-wrap gap-2">{weeklyPlan.meal_schedule?.filter(item => !['Wake', 'Sleep'].includes(item.meal)).map(item => <span key={item.meal} className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs"><b className="text-slate-200">{item.meal}</b><span className="ml-2 text-emerald-300">{item.time}</span></span>)}</div></div>
+                  <div><p className="mb-3 text-xs font-extrabold uppercase tracking-wider text-slate-500">Work hours</p><p className="text-sm text-slate-300">{weeklyPlan.work_schedule.start}–{weeklyPlan.work_schedule.end} IST <span className="text-xs text-slate-500">· Wake {weeklyPlan.meal_schedule?.[0]?.time} · Sleep {weeklyPlan.meal_schedule?.at(-1)?.time}</span></p></div>
+                </div>
+              </>
+            ) : <p className="rounded-xl bg-slate-900/40 p-6 text-sm text-slate-400">Save your profile to generate a personal seven-day routine and calorie schedule.</p>}
+          </section>
+        </>
+      ) : <div className="glass-card p-5 text-sm text-slate-400">Save your measurements and goal to calculate your starting targets and weekly plan.</div>}
+    </div>
+  );
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('home');
   const [profile, setProfile] = useState(null);
@@ -56,15 +365,23 @@ export default function App() {
   const [input, setInput] = useState("");
   const [category, setCategory] = useState("nutrition");
   const [loading, setLoading] = useState(false);
-  const [showProfileModal, setShowProfileModal] = useState(false);
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [favoriteFoods, setFavoriteFoods] = useState([]);
+  const [recentFoods, setRecentFoods] = useState([]);
+  const [foodListMode, setFoodListMode] = useState('search');
+  const [foodCollectionsLoading, setFoodCollectionsLoading] = useState(false);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-  const [profForm, setProfForm] = useState({
-    age: 25, sex: "male", height: 175, weight: 70, activity_level: "moderate", diet_type: "non-veg", goal: "maintain"
-  });
+  const [profForm, setProfForm] = useState({ ...DEFAULT_PROFILE_FORM });
+  const [profileDirty, setProfileDirty] = useState(false);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [weeklyPlan, setWeeklyPlan] = useState(null);
+  const [weeklyPlanLoading, setWeeklyPlanLoading] = useState(false);
+  const [insightDays, setInsightDays] = useState(7);
+  const [insightData, setInsightData] = useState(null);
+  const [insightsLoading, setInsightsLoading] = useState(false);
 
   const [aiChips, setAiChips] = useState([]);
   const [isParsing, setIsParsing] = useState(false);
@@ -77,6 +394,15 @@ export default function App() {
   const [workoutPlan, setWorkoutPlan] = useState(null);
   const [workoutLoading, setWorkoutLoading] = useState(false);
   const [workoutPrefs, setWorkoutPrefs] = useState({ equipment: 'Gym', duration: '45' });
+  const [trainView, setTrainView] = useState('planner');
+  const [workoutTemplates, setWorkoutTemplates] = useState([]);
+  const [exerciseLibrary, setExerciseLibrary] = useState([]);
+  const [exerciseQuery, setExerciseQuery] = useState('');
+  const [exerciseGroup, setExerciseGroup] = useState('Any');
+  const [workoutSessions, setWorkoutSessions] = useState([]);
+  const [activeWorkout, setActiveWorkout] = useState(null);
+  const [workoutElapsed, setWorkoutElapsed] = useState(0);
+  const [workoutSaving, setWorkoutSaving] = useState(false);
 
   const [showLogPage, setShowLogPage] = useState(false);
   const [toast, setToast] = useState(null);
@@ -111,6 +437,7 @@ export default function App() {
         axios.get(`${API_BASE}/tracking/daily?date_filter=${dateStr}`)
       ]);
       setProfile(profRes.data);
+      if (!profileDirty) setProfForm(profileToForm(profRes.data));
       setLogs(logsRes.data);
       setSummary(sumRes.data);
       setTracking(trackingRes.data);
@@ -210,6 +537,7 @@ export default function App() {
   };
 
   const searchFood = async (q) => {
+    setFoodListMode('search');
     setSearchQuery(q);
     if (q.length < 2) { setSearchResults([]); setSearchLoading(false); return; }
     setSearchLoading(true);
@@ -218,6 +546,37 @@ export default function App() {
       setSearchResults(res.data);
     } catch (e) { console.error("Search error", e); notify('Food search is unavailable right now.', 'error'); }
     finally { setSearchLoading(false); }
+  };
+
+  const loadFoodCollections = async () => {
+    setFoodCollectionsLoading(true);
+    try {
+      const [favoritesRes, recentRes] = await Promise.all([
+        axios.get(`${API_BASE}/foods/favorites`),
+        axios.get(`${API_BASE}/foods/recent`)
+      ]);
+      setFavoriteFoods(favoritesRes.data);
+      setRecentFoods(recentRes.data);
+    } catch (e) {
+      console.error('Could not load favorite and recent foods:', e);
+    } finally {
+      setFoodCollectionsLoading(false);
+    }
+  };
+
+  const toggleFoodFavorite = async (food, event) => {
+    event.stopPropagation();
+    const isFavorite = favoriteFoods.some(item => item.id === food.id);
+    try {
+      await axios.request({
+        method: isFavorite ? 'delete' : 'put',
+        url: `${API_BASE}/foods/${food.id}/favorite`
+      });
+      await loadFoodCollections();
+      notify(isFavorite ? `${food.name} removed from favorites.` : `${food.name} added to favorites.`);
+    } catch (e) {
+      notify(e.response?.data?.detail || 'Could not update favorites.', 'error');
+    }
   };
 
   const selectFood = (food) => {
@@ -236,6 +595,7 @@ export default function App() {
       await axios.post(`${API_BASE}/logs`, {
         category: 'nutrition', meal: selectedMeal,
         note: `${servings} × ${selectedFood.name} (${selectedFood.serving_size})`, source: 'database',
+        food_item_id: selectedFood.id,
         calories: Number(selectedFood.calories || 0) * servings,
         protein: Number(selectedFood.protein || 0) * servings,
         carbs: Number(selectedFood.carbs || 0) * servings,
@@ -244,6 +604,7 @@ export default function App() {
       });
       setSelectedFood(null);
       await loadAllData();
+      await loadFoodCollections();
       notify(`${selectedFood.name} added to ${selectedMeal.toLowerCase()}.`);
     } catch (e) { notify(e.response?.data?.detail || 'Could not add this food.', 'error'); }
     finally { setLoading(false); }
@@ -351,6 +712,7 @@ export default function App() {
 
   const generateWorkout = async () => {
     setWorkoutLoading(true);
+    setWorkoutPlan(null);
     try {
       const res = await axios.post(`${API_BASE}/workouts/plan`, workoutPrefs);
       setWorkoutPlan(res.data);
@@ -362,19 +724,214 @@ export default function App() {
   };
 
   const saveProfile = async () => {
+    if (profForm.goal === 'lose' && !profForm.target_weight_kg) {
+      notify('Add a target weight below your current weight to build a loss plan.', 'error');
+      return;
+    }
+    setProfileSaving(true);
     try {
-      await axios.post(`${API_BASE}/profile`, profForm);
-      setShowProfileModal(false);
+      const payload = {
+        ...profForm,
+        age: Number(profForm.age),
+        height: Number(profForm.height),
+        weight: Number(profForm.weight),
+        target_weight_kg: profForm.target_weight_kg === '' ? null : Number(profForm.target_weight_kg),
+      };
+      const response = await axios.post(`${API_BASE}/profile`, payload);
+      setProfile(response.data);
+      setProfForm(profileToForm(response.data));
+      setProfileDirty(false);
+      const planResponse = await axios.get(`${API_BASE}/profile/weekly-plan`);
+      setWeeklyPlan(planResponse.data);
       await loadAllData();
-      notify('Profile saved.');
-    } catch (e) { notify("Failed to save profile.", 'error'); }
+      notify('Profile and weekly plan saved.');
+    } catch (e) {
+      const detail = e.response?.data?.detail;
+      const message = Array.isArray(detail) ? detail.map(issue => issue.msg).join(' ') : detail;
+      notify(message || 'Could not save your profile. Check the measurements and target weight.', 'error');
+    } finally {
+      setProfileSaving(false);
+    }
   };
+
+  const updateProfileField = (field, value) => {
+    setProfForm(previous => {
+      const next = { ...previous, [field]: value };
+      if (['wake_time', 'work_start_time', 'work_end_time', 'sleep_time'].includes(field)) {
+        return { ...next, ...suggestRoutineMealTimes(next) };
+      }
+      return next;
+    });
+    setProfileDirty(true);
+  };
+
+  const suggestProfileMealTimes = () => {
+    setProfForm(previous => ({ ...previous, ...suggestRoutineMealTimes(previous) }));
+    setProfileDirty(true);
+  };
+
+  const loadWorkoutData = async () => {
+    try {
+      const [templatesRes, exercisesRes, sessionsRes] = await Promise.all([
+        axios.get(`${API_BASE}/workouts/templates?equipment=${encodeURIComponent(workoutPrefs.equipment)}`),
+        axios.get(`${API_BASE}/exercises`),
+        axios.get(`${API_BASE}/workouts/sessions?limit=10`)
+      ]);
+      setWorkoutTemplates(templatesRes.data);
+      setExerciseLibrary(exercisesRes.data);
+      setWorkoutSessions(sessionsRes.data);
+    } catch (e) {
+      console.error('Workout data loading error:', e);
+      notify('Could not load workout library.', 'error');
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'train') loadWorkoutData();
+  }, [activeTab, workoutPrefs.equipment]);
+
+  useEffect(() => {
+    if (activeTab !== 'profile' || !profile) return;
+    let cancelled = false;
+    setWeeklyPlanLoading(true);
+    axios.get(`${API_BASE}/profile/weekly-plan`)
+      .then(response => { if (!cancelled) setWeeklyPlan(response.data); })
+      .catch(error => {
+        if (!cancelled) {
+          setWeeklyPlan(null);
+          console.error('Weekly plan loading error:', error);
+        }
+      })
+      .finally(() => { if (!cancelled) setWeeklyPlanLoading(false); });
+    return () => { cancelled = true; };
+  }, [activeTab, profile?.id, profile?.calorie_target]);
+
+  useEffect(() => {
+    if (activeTab !== 'insights') return;
+    let cancelled = false;
+    setInsightsLoading(true);
+    axios.get(`${API_BASE}/insights?days=${insightDays}`)
+      .then(response => { if (!cancelled) setInsightData(response.data); })
+      .catch(error => {
+        if (!cancelled) {
+          setInsightData(null);
+          notify(error.response?.data?.detail || 'Could not load your insights.', 'error');
+        }
+      })
+      .finally(() => { if (!cancelled) setInsightsLoading(false); });
+    return () => { cancelled = true; };
+  }, [activeTab, insightDays, profile?.id, profile?.calorie_target]);
+
+  const activeWorkoutStartedAt = activeWorkout?.startedAt;
+  useEffect(() => {
+    if (!activeWorkoutStartedAt) return undefined;
+    const updateElapsed = () => setWorkoutElapsed(Math.floor((Date.now() - activeWorkoutStartedAt) / 1000));
+    updateElapsed();
+    const timer = setInterval(updateElapsed, 1000);
+    return () => clearInterval(timer);
+  }, [activeWorkoutStartedAt]);
+
+  const startWorkout = (plan) => {
+    if (!plan?.exercises?.length) {
+      notify('This plan has no exercises to track.', 'error');
+      return;
+    }
+    setActiveWorkout({
+      workoutName: plan.workout_name,
+      startedAt: Date.now(),
+      exercises: plan.exercises.map(exercise => ({
+        ...exercise,
+        completed: false,
+        actualSets: Array.from({ length: Math.max(1, Math.min(Number(exercise.sets) || 1, 8)) }, () => ({ reps: '', weight: '', rpe: '' }))
+      }))
+    });
+    setWorkoutElapsed(0);
+    notify('Workout started. Log the reps and weight you complete.', 'info');
+  };
+
+  const updateWorkoutExercise = (exerciseIndex, patch) => {
+    setActiveWorkout(current => ({
+      ...current,
+      exercises: current.exercises.map((exercise, index) => index === exerciseIndex ? { ...exercise, ...patch } : exercise)
+    }));
+  };
+
+  const updateWorkoutSet = (exerciseIndex, setIndex, key, value) => {
+    const exercise = activeWorkout?.exercises[exerciseIndex];
+    if (!exercise) return;
+    const actualSets = exercise.actualSets.map((set, index) => index === setIndex ? { ...set, [key]: value } : set);
+    updateWorkoutExercise(exerciseIndex, { actualSets });
+  };
+
+  const completeWorkout = async () => {
+    if (!activeWorkout || workoutSaving) return;
+    const completed = activeWorkout.exercises.filter(exercise => exercise.completed);
+    if (!completed.length) {
+      notify('Mark at least one exercise complete before saving.', 'error');
+      return;
+    }
+    const invalidSet = completed.some(exercise => exercise.actualSets.some(set => {
+      if (set.reps !== '' && (!Number.isInteger(Number(set.reps)) || Number(set.reps) <= 0)) return true;
+      if (set.weight !== '' && (!Number.isFinite(Number(set.weight)) || Number(set.weight) < 0)) return true;
+      return set.rpe !== '' && (!Number.isInteger(Number(set.rpe)) || Number(set.rpe) < 1 || Number(set.rpe) > 10);
+    }));
+    if (invalidSet) {
+      notify('Check set entries: reps must be whole numbers, load non-negative, and RPE from 1 to 10.', 'error');
+      return;
+    }
+    const sets = completed.flatMap(exercise => exercise.actualSets
+      .map((set, index) => ({ set, index }))
+      .filter(({ set }) => set.reps !== '' && Number(set.reps) > 0)
+      .map(({ set, index }) => ({
+        exercise_id: exercise.exercise_id,
+        set_number: index + 1,
+        reps: Number(set.reps),
+        weight: set.weight === '' ? null : Number(set.weight),
+        rpe: set.rpe === '' ? null : Math.min(10, Math.max(1, Math.round(Number(set.rpe))))
+      })));
+    const duration = Math.max(1, Math.round((Date.now() - activeWorkout.startedAt) / 60000));
+    setWorkoutSaving(true);
+    try {
+      await axios.post(`${API_BASE}/workouts/log`, {
+        workout_type: activeWorkout.workoutName,
+        duration_mins: duration,
+        note: `Completed ${completed.length} of ${activeWorkout.exercises.length} planned exercises.`,
+        sets
+      });
+      setActiveWorkout(null);
+      await loadWorkoutData();
+      notify('Workout saved to your history.');
+    } catch (e) {
+      notify(e.response?.data?.detail || 'Could not save the workout.', 'error');
+    } finally {
+      setWorkoutSaving(false);
+    }
+  };
+
+  const discardWorkout = () => {
+    setActiveWorkout(null);
+    setWorkoutElapsed(0);
+    notify('Workout session discarded.', 'info');
+  };
+
+  const foodRows = foodListMode === 'favorites'
+    ? favoriteFoods
+    : foodListMode === 'recent'
+      ? recentFoods
+      : searchResults;
+
+  const filteredExercises = exerciseLibrary.filter(exercise => {
+    const matchesQuery = !exerciseQuery || `${exercise.name} ${exercise.instructions} ${exercise.muscle_group}`.toLowerCase().includes(exerciseQuery.toLowerCase());
+    return matchesQuery && (exerciseGroup === 'Any' || exercise.muscle_group === exerciseGroup);
+  });
+
+  useEffect(() => { loadFoodCollections(); }, []);
 
   return (
     <div className="app-shell min-h-screen bg-[#FBFBFF] font-poppins text-slate-900">
       <header className="bg-white/70 backdrop-blur-md border-b border-slate-100 sticky top-0 z-30">
         <div className="max-w-6xl mx-auto px-6 h-20 flex items-center justify-between">
-          <div className="flex items-center gap-4 cursor-pointer group" onClick={() => setShowProfileModal(true)}>
+          <div className="flex items-center gap-4 cursor-pointer group" onClick={() => { setActiveTab('profile'); setShowLogPage(false); }}>
             <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-green-400 to-green-600 flex items-center justify-center text-2xl text-white shadow-lg transition-transform group-hover:scale-110 duration-300">🌿</div>
             <div className="transition-opacity group-hover:opacity-80">
               <h1 className="text-xl font-extrabold text-slate-900 leading-tight tracking-tight">LocalHealth Pro</h1>
@@ -498,19 +1055,34 @@ export default function App() {
                     <span className="text-2xl">🔍</span>
                     <span className="text-sm font-bold uppercase tracking-widest">Nutrition Database</span>
                   </div>
+                  <div className="flex flex-wrap gap-2" role="tablist" aria-label="Food lists">
+                    {[['search', 'Search'], ['favorites', '★ Favorites'], ['recent', 'Recent']].map(([mode, label]) => (
+                      <button key={mode} role="tab" aria-selected={foodListMode === mode}
+                        onClick={() => { setFoodListMode(mode); setSelectedFood(null); }}
+                        className={`rounded-full px-4 py-2 text-xs font-bold transition-colors ${foodListMode === mode ? 'bg-emerald-600 text-white shadow-md shadow-emerald-200' : 'bg-white text-slate-500 border border-slate-200 hover:border-emerald-300'}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                   <div className="relative">
                     <input 
-                      value={searchQuery} 
-                      onChange={e => searchFood(e.target.value)} 
-                      placeholder="Search for a specific food..." 
+                      value={searchQuery}
+                      onFocus={() => setFoodListMode('search')}
+                      onChange={e => searchFood(e.target.value)}
+                      disabled={foodListMode !== 'search'}
+                      placeholder="Search foods: roti, chapati, dahi, kela…"
                       className="w-full p-4 pl-12 bg-white rounded-2xl border border-slate-100 shadow-sm outline-none text-sm focus:border-green-300 transition-all"
                     />
                     <span className="absolute left-4 top-4 text-slate-400 text-lg">{searchLoading ? <i className="block w-4 h-4 rounded-full border-2 border-green-500/30 border-t-green-500 animate-spin"/> : '🔍'}</span>
                   </div>
                   <div className="max-h-[400px] overflow-y-auto space-y-3 pr-2">
-                    {searchLoading && <div className="flex items-center justify-center gap-3 text-slate-400 text-sm py-10"><i className="w-4 h-4 rounded-full border-2 border-green-500/30 border-t-green-500 animate-spin"/>Searching nutrition database…</div>}
-                    {!searchLoading && searchResults.length === 0 && searchQuery.length >= 2 && <div className="text-center text-slate-400 text-sm py-10">No foods found in database.</div>}
-                    {searchResults.map(food => (
+                    {(searchLoading || foodCollectionsLoading) && <div className="flex items-center justify-center gap-3 text-slate-400 text-sm py-10"><i className="w-4 h-4 rounded-full border-2 border-green-500/30 border-t-green-500 animate-spin"/>{searchLoading ? 'Searching nutrition database…' : 'Loading your food lists…'}</div>}
+                    {!searchLoading && !foodCollectionsLoading && foodRows.length === 0 && (
+                      <div className="text-center text-slate-400 text-sm py-10">
+                        {foodListMode === 'search' && searchQuery.length >= 2 ? 'No foods found. Try another name or log the food manually.' : foodListMode === 'favorites' ? 'Your favorite foods will show up here. Tap the star on a food to save it.' : foodListMode === 'recent' ? 'Foods you choose from the catalog will appear here after you log them.' : 'Search for a food, or choose Favorites or Recent.'}
+                      </div>
+                    )}
+                    {foodRows.map(food => (
                       <div 
                         key={food.id} 
                         onClick={() => selectFood(food)}
@@ -520,13 +1092,18 @@ export default function App() {
                           <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center text-xs group-hover:bg-green-50 transition-colors">🍎</div>
                           <div>
                             <p className="text-sm font-bold text-slate-800">{food.name}</p>
-                            <p className="text-xs text-slate-400">{food.serving_size}</p>
+                            <p className="text-xs text-slate-400">{food.serving_size} · {food.source_version ? `USDA FDC ${food.source_version}` : food.source || 'Local estimate'}</p>
                           </div>
                         </div>
                         <div className="text-right">
                           <p className="text-sm font-bold text-slate-700">{food.calories} kcal</p>
                           <p className="text-[10px] text-slate-400 uppercase font-bold">P:{food.protein}g C:{food.carbs}g F:{food.fats}g · Fiber:{food.fiber || 0}g</p>
                         </div>
+                        <button type="button" aria-label={favoriteFoods.some(item => item.id === food.id) ? `Remove ${food.name} from favorites` : `Add ${food.name} to favorites`}
+                          onClick={event => toggleFoodFavorite(food, event)}
+                          className={`ml-3 rounded-full p-2 text-lg transition-colors ${favoriteFoods.some(item => item.id === food.id) ? 'text-amber-500 hover:bg-amber-50' : 'text-slate-300 hover:bg-amber-50 hover:text-amber-500'}`}>
+                          {favoriteFoods.some(item => item.id === food.id) ? '★' : '☆'}
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -696,6 +1273,19 @@ export default function App() {
                 </>
               )}
 
+              {activeTab === 'profile' && (
+                <ProfileTab
+                  form={profForm}
+                  updateField={updateProfileField}
+                  profile={profile}
+                  weeklyPlan={weeklyPlan}
+                  planLoading={weeklyPlanLoading}
+                  saving={profileSaving}
+                  onSave={saveProfile}
+                  onSuggestTimes={suggestProfileMealTimes}
+                />
+              )}
+
               {activeTab === 'coach' && (
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="max-w-3xl mx-auto h-[calc(100vh-300px)] flex flex-col">
                   <div className="flex-1 overflow-y-auto space-y-4 mb-6 px-4">
@@ -724,97 +1314,131 @@ export default function App() {
 
               {activeTab === 'train' && (
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="max-w-4xl mx-auto space-y-10">
-                  <div className="bg-white p-12 rounded-[3rem] shadow-sm border border-slate-100 text-center space-y-8">
-                    <h2 className="text-4xl font-extrabold text-slate-900 tracking-tight">AI Workout Planner</h2>
-                    <p className="text-slate-500 max-w-lg mx-auto text-lg leading-relaxed">Generate a scientific training plan based on your profile, available equipment, and time.</p>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-2xl mx-auto text-left">
-                      <div className="space-y-2">
-                        <label className="text-xs font-bold text-slate-400 uppercase block ml-1 tracking-wider">Equipment</label>
-                        <select 
-                          value={workoutPrefs.equipment} 
-                          onChange={e => setWorkoutPrefs({...workoutPrefs, equipment: e.target.value})}
-                          className="w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 outline-none text-sm focus:border-green-300 transition-all"
-                        >
-                          <option value="Gym">Gym</option>
-                          <option value="Home">Home</option>
-                          <option value="Dumbbells">Dumbbells only</option>
-                          <option value="None">Bodyweight</option>
-                        </select>
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-xs font-bold text-slate-400 uppercase block ml-1 tracking-wider">Duration (min)</label>
-                        <input 
-                          type="number" 
-                          value={workoutPrefs.duration} 
-                          onChange={e => setWorkoutPrefs({...workoutPrefs, duration: e.target.value})}
-                          className="w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 outline-none text-sm focus:border-green-300 transition-all"
-                        />
-                      </div>
-                    </div>
-                    
-                    <button 
-                      onClick={generateWorkout} 
-                      disabled={workoutLoading}
-                      className="px-16 py-5 bg-green-500 text-white rounded-full font-extrabold shadow-xl shadow-green-200 hover:bg-green-600 transition-all disabled:bg-slate-300 text-lg"
-                    >
-                      {workoutLoading ? <span className="inline-flex items-center justify-center gap-3"><i className="w-5 h-5 rounded-full border-2 border-white/40 border-t-white animate-spin"/>Building your plan…</span> : 'Generate My Plan'}
-                    </button>
+                  <div className="flex flex-wrap gap-2 rounded-2xl bg-white p-2 border border-slate-100 shadow-sm" role="tablist" aria-label="Workout sections">
+                    {[["planner", "Planner"], ["library", "Exercise library"], ["history", "History"]].map(([view, label]) => (
+                      <button key={view} role="tab" aria-selected={trainView === view} onClick={() => setTrainView(view)}
+                        className={`rounded-xl px-5 py-3 text-sm font-bold transition-colors ${trainView === view ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>
+                        {label}
+                      </button>
+                    ))}
                   </div>
 
-                  <AnimatePresence>
+                  {activeWorkout && trainView !== 'planner' && (
+                    <button onClick={() => setTrainView('planner')} className="w-full rounded-2xl bg-emerald-50 border border-emerald-200 p-4 text-left text-sm font-bold text-emerald-800">
+                      Workout in progress · {Math.floor(workoutElapsed / 60)}:{String(workoutElapsed % 60).padStart(2, '0')} · Resume session
+                    </button>
+                  )}
+
+                  {trainView === 'planner' && <>
+                    <div className="bg-white p-8 sm:p-12 rounded-[2.5rem] shadow-sm border border-slate-100 text-center space-y-8">
+                      <div>
+                        <h2 className="text-4xl font-extrabold text-slate-900 tracking-tight">Workout Planner</h2>
+                        <p className="text-slate-500 max-w-lg mx-auto mt-3">Choose a ready-made routine or ask the local AI to create a plan from the exercise library.</p>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-2xl mx-auto text-left">
+                        <label className="space-y-2 block text-xs font-bold text-slate-400 uppercase tracking-wider">Equipment
+                          <select value={workoutPrefs.equipment} onChange={e => setWorkoutPrefs({...workoutPrefs, equipment: e.target.value})} className="mt-2 w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 outline-none text-sm text-slate-800 normal-case">
+                            <option value="Gym">Gym</option><option value="Home">Home</option><option value="Dumbbells">Dumbbells only</option><option value="None">Bodyweight</option>
+                          </select>
+                        </label>
+                        <label className="space-y-2 block text-xs font-bold text-slate-400 uppercase tracking-wider">Duration (minutes)
+                          <input type="number" min="10" max="180" value={workoutPrefs.duration} onChange={e => setWorkoutPrefs({...workoutPrefs, duration: e.target.value})} className="mt-2 w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 outline-none text-sm text-slate-800" />
+                        </label>
+                      </div>
+                      <button onClick={generateWorkout} disabled={workoutLoading} className="px-10 py-4 bg-green-500 text-white rounded-full font-extrabold shadow-xl shadow-green-200 hover:bg-green-600 transition-all disabled:bg-slate-300">
+                        {workoutLoading ? <span className="inline-flex items-center gap-3"><i className="w-5 h-5 rounded-full border-2 border-white/40 border-t-white animate-spin"/>Building your plan…</span> : 'Generate AI plan'}
+                      </button>
+                      <p className="text-xs text-slate-400">Plans use exercises from your local library. Use a comfortable range and stop if you feel pain.</p>
+                    </div>
+
+                    <section className="space-y-4">
+                      <div><h3 className="text-xl font-extrabold text-slate-900">Ready-made templates</h3><p className="text-sm text-slate-500 mt-1">Simple routines you can use without waiting for AI.</p></div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {workoutTemplates.map(template => (
+                          <article key={template.workout_name} className="rounded-3xl bg-white p-6 border border-slate-100 shadow-sm flex flex-col gap-4">
+                            <div><span className="text-[10px] uppercase tracking-widest font-bold text-emerald-700">{template.equipment} · {template.duration} min</span><h4 className="mt-2 font-extrabold text-slate-900">{template.workout_name}</h4><p className="mt-2 text-xs leading-relaxed text-slate-500">{template.reasoning}</p></div>
+                            <p className="text-xs text-slate-500">{template.exercises.length} exercises · 3 sets each</p>
+                            <button onClick={() => { setWorkoutPlan(template); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="mt-auto rounded-xl bg-emerald-50 text-emerald-800 px-4 py-3 text-sm font-bold hover:bg-emerald-100">Preview routine</button>
+                          </article>
+                        ))}
+                        {!workoutTemplates.length && <p className="text-sm text-slate-400">Loading templates…</p>}
+                      </div>
+                    </section>
+
                     {workoutPlan && (
-                      <motion.div 
-                        initial={{ opacity: 0, y: 20 }} 
-                        animate={{ opacity: 1, y: 0 }} 
-                        className="bg-white p-10 rounded-[3rem] shadow-sm border border-slate-100 space-y-8"
-                      >
-                        <div className="flex justify-between items-center border-b border-slate-100 pb-8">
-                          <div>
-                            <h3 className="text-3xl font-extrabold text-slate-900 tracking-tight">{workoutPlan.workout_name}</h3>
-                            <p className="text-sm text-slate-500 mt-2 leading-relaxed">{workoutPlan.reasoning}</p>
-                          </div>
-                          <span className="text-xs bg-green-100 text-green-700 px-4 py-1.5 rounded-full font-bold uppercase tracking-widest">AI Planned</span>
+                      <section className="rounded-[2rem] bg-white p-7 sm:p-10 border border-slate-100 shadow-sm space-y-6">
+                        <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 pb-5">
+                          <div><h3 className="text-2xl font-extrabold text-slate-900">{workoutPlan.workout_name}</h3><p className="mt-2 text-sm text-slate-500">{workoutPlan.reasoning}</p></div>
+                          <span className="rounded-full bg-emerald-50 text-emerald-700 px-3 py-1.5 text-xs font-bold">{workoutPlan.source === 'template' ? 'Template' : 'AI plan'}</span>
                         </div>
-                        
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          {workoutPlan?.exercises?.map((ex, i) => (
-                            <div key={i} className="p-5 bg-slate-50 rounded-3xl border border-slate-100 flex justify-between items-center hover:bg-slate-100 transition-all group">
-                              <div className="flex items-center gap-4">
-                                <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shadow-sm text-lg group-hover:scale-110 transition-transform">💪</div>
-                                <div>
-                                  <p className="text-sm font-bold text-slate-800">{ex.name}</p>
-                                  <p className="text-xs text-slate-400">{ex.sets} sets • {ex.reps} reps • {ex.rest} rest</p>
-                                </div>
-                              </div>
-                              <div className="text-right">
-                                <span className="text-xs font-bold text-slate-600 bg-slate-200 px-3 py-1 rounded-full">RPE {ex.rpe}</span>
-                              </div>
-                            </div>
+                        {workoutPlan.warm_up && <p className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-900"><b>Warm-up:</b> {workoutPlan.warm_up}</p>}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {workoutPlan.exercises?.map((ex, i) => (
+                            <article key={`${ex.exercise_id}-${i}`} className="rounded-2xl bg-slate-50 p-5 border border-slate-100">
+                              <div className="flex justify-between gap-3"><div><p className="font-bold text-slate-800">{ex.name}</p><p className="text-xs text-slate-500 mt-1">{ex.sets} sets · {ex.reps} reps · rest {ex.rest}</p></div><span className="text-xs rounded-full bg-white px-3 py-1 h-fit font-bold text-slate-600">RPE {ex.rpe}</span></div>
+                              {ex.instructions && <p className="mt-3 text-xs leading-relaxed text-slate-500">{ex.instructions}</p>}
+                            </article>
                           ))}
                         </div>
-                        
-                        <button 
-                          onClick={() => {
-                            notify("Workout tracking session starting.", 'info');
-                            setActiveTab('home');
-                          }} 
-                          className="w-full py-5 bg-slate-900 text-white rounded-3xl font-extrabold shadow-xl hover:bg-slate-800 transition-all text-lg"
-                        >
-                          Start Tracking Session
-                        </button>
-                      </motion.div>
+                        {!activeWorkout ? <button onClick={() => startWorkout(workoutPlan)} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-extrabold shadow-lg hover:bg-slate-800">Start workout</button> : <p className="text-center text-sm font-bold text-emerald-700">A workout session is already in progress.</p>}
+                      </section>
                     )}
-                  </AnimatePresence>
+
+                    {activeWorkout && (
+                      <section className="rounded-[2rem] bg-white p-6 sm:p-9 border border-emerald-200 shadow-lg shadow-emerald-100/50 space-y-6">
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-5">
+                          <div><p className="text-xs uppercase tracking-widest font-bold text-emerald-700">Workout in progress</p><h3 className="mt-1 text-2xl font-extrabold text-slate-900">{activeWorkout.workoutName}</h3></div>
+                          <span className="rounded-xl bg-slate-900 px-4 py-2 font-mono text-lg font-bold text-white">{Math.floor(workoutElapsed / 60)}:{String(workoutElapsed % 60).padStart(2, '0')}</span>
+                        </div>
+                        <p className="text-sm text-slate-500">Mark each exercise you complete. Enter actual reps, load, and effort for each set; planned values are not saved as completed work.</p>
+                        <div className="space-y-4">
+                          {activeWorkout.exercises.map((exercise, exerciseIndex) => (
+                            <article key={`${exercise.exercise_id}-${exerciseIndex}`} className={`rounded-2xl border p-4 ${exercise.completed ? 'border-emerald-200 bg-emerald-50/60' : 'border-slate-100 bg-slate-50'}`}>
+                              <label className="flex items-center gap-3 font-bold text-slate-800"><input type="checkbox" checked={exercise.completed} onChange={e => updateWorkoutExercise(exerciseIndex, { completed: e.target.checked })} className="h-5 w-5 accent-emerald-600"/>{exercise.name}<span className="ml-auto text-xs font-medium text-slate-500">Plan: {exercise.sets} × {exercise.reps}</span></label>
+                              <div className="mt-4 space-y-2">
+                                {exercise.actualSets.map((set, setIndex) => (
+                                  <div key={setIndex} className="grid grid-cols-[auto_1fr_1fr_1fr] items-center gap-2">
+                                    <span className="text-xs font-bold text-slate-400">Set {setIndex + 1}</span>
+                                    <input type="number" min="0" max="1000" step="1" value={set.reps} onChange={e => updateWorkoutSet(exerciseIndex, setIndex, 'reps', e.target.value)} placeholder="Reps" aria-label={`${exercise.name} set ${setIndex + 1} reps`} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"/>
+                                    <input type="number" min="0" max="2000" step="0.5" value={set.weight} onChange={e => updateWorkoutSet(exerciseIndex, setIndex, 'weight', e.target.value)} placeholder="Load kg" aria-label={`${exercise.name} set ${setIndex + 1} load in kilograms`} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"/>
+                                    <input type="number" min="1" max="10" step="1" value={set.rpe} onChange={e => updateWorkoutSet(exerciseIndex, setIndex, 'rpe', e.target.value)} placeholder="RPE" aria-label={`${exercise.name} set ${setIndex + 1} effort`} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"/>
+                                  </div>
+                                ))}
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                        <div className="flex flex-col sm:flex-row gap-3"><button onClick={completeWorkout} disabled={workoutSaving} className="flex-1 rounded-xl bg-emerald-600 px-5 py-4 text-sm font-extrabold text-white disabled:opacity-60">{workoutSaving ? 'Saving workout…' : 'Complete and save'}</button><button onClick={discardWorkout} disabled={workoutSaving} className="rounded-xl border border-slate-200 px-5 py-4 text-sm font-bold text-slate-500 disabled:opacity-60">Discard session</button></div>
+                      </section>
+                    )}
+                  </>}
+
+                  {trainView === 'library' && (
+                    <section className="space-y-6">
+                      <div><h2 className="text-3xl font-extrabold text-slate-900">Exercise library</h2><p className="text-slate-500 mt-2">Browse movements, equipment needs, and basic form cues.</p></div>
+                      <div className="grid grid-cols-1 sm:grid-cols-[1fr_220px] gap-3">
+                        <input value={exerciseQuery} onChange={e => setExerciseQuery(e.target.value)} placeholder="Search exercise or muscle group" className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm"/>
+                        <select value={exerciseGroup} onChange={e => setExerciseGroup(e.target.value)} className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm"><option>Any</option>{[...new Set(exerciseLibrary.map(exercise => exercise.muscle_group))].sort().map(group => <option key={group}>{group}</option>)}</select>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {filteredExercises.map(exercise => <article key={exercise.id} className="rounded-2xl bg-white p-6 border border-slate-100 shadow-sm"><div className="flex justify-between gap-3"><h3 className="font-extrabold text-slate-900">{exercise.name}</h3><span className="h-fit rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-bold text-emerald-700">{exercise.difficulty}</span></div><p className="mt-1 text-xs font-bold uppercase tracking-wide text-slate-400">{exercise.muscle_group} · {exercise.equipment}</p><p className="mt-4 text-sm leading-relaxed text-slate-600">{exercise.instructions}</p><p className="mt-3 text-xs text-amber-800"><b>Watch for:</b> {exercise.common_mistakes}</p></article>)}
+                        {!filteredExercises.length && <p className="text-sm text-slate-400">No exercises match that search.</p>}
+                      </div>
+                    </section>
+                  )}
+
+                  {trainView === 'history' && (
+                    <section className="space-y-6">
+                      <div><h2 className="text-3xl font-extrabold text-slate-900">Workout history</h2><p className="text-slate-500 mt-2">Your latest saved sessions and logged sets.</p></div>
+                      {!workoutSessions.length && <div className="rounded-3xl bg-white p-12 text-center text-slate-400 border border-slate-100">Completed sessions will appear here.</div>}
+                      <div className="space-y-4">{workoutSessions.map(session => <article key={session.id} className="rounded-2xl bg-white p-6 border border-slate-100 shadow-sm"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-extrabold text-slate-900">{session.workout_type}</h3><p className="mt-1 text-xs text-slate-400">{new Date(session.date).toLocaleString()} · {session.duration_mins} min</p></div><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">{session.sets.length} sets logged</span></div>{session.note && <p className="mt-3 text-sm text-slate-500">{session.note}</p>}{session.sets.length > 0 && <div className="mt-4 flex flex-wrap gap-2">{session.sets.map((set,index) => <span key={`${session.id}-${index}`} className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">{set.exercise_name} · {set.reps} reps{set.weight != null ? ` · ${set.weight} kg` : ''}</span>)}</div>}</article>)}</div>
+                    </section>
+                  )}
                 </motion.div>
               )}
 
               {activeTab === 'insights' && (
-                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="max-w-2xl mx-auto text-center py-20 space-y-8">
-                  <div className="text-8xl mb-8 animate-bounce">📈</div>
-                  <h3 className="text-4xl font-extrabold text-slate-900 tracking-tight">Analytics Coming Soon</h3>
-                  <p className="text-lg text-slate-500 max-w-md mx-auto leading-relaxed">We're building the pattern detection engine to correlate your sleep, workouts, and nutrition.</p>
-                </motion.div>
+                <InsightsTab data={insightData} loading={insightsLoading} days={insightDays} onDaysChange={setInsightDays} />
               )}
             </motion.div>
           )}
@@ -828,6 +1452,7 @@ export default function App() {
             { id: 'coach', icon: '🤖', label: 'Coach' },
             { id: 'train', icon: '💪', label: 'Train' },
             { id: 'insights', icon: '📈', label: 'Insights' },
+            { id: 'profile', icon: '👤', label: 'Profile' },
           ].map(tab => (
             <button 
               key={tab.id} 
@@ -844,57 +1469,6 @@ export default function App() {
         </div>
       </nav>
 
-      {/* Profile Modal */}
-      {showProfileModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
-          <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white w-full max-w-lg rounded-[2.5rem] p-10 shadow-2xl">
-            <h2 className="text-3xl font-extrabold text-slate-900 mb-8 tracking-tight">Your Profile</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-400 uppercase block">Age</label>
-                <input type="number" value={profForm.age} onChange={e => setProfForm({...profForm, age: parseInt(e.target.value)})} className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 outline-none text-sm focus:border-green-300 transition-all" />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-400 uppercase block">Sex</label>
-                <select value={profForm.sex} onChange={e => setProfForm({...profForm, sex: e.target.value})} className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 outline-none text-sm focus:border-green-300 transition-all">
-                  <option value="male">Male</option>
-                  <option value="female">Female</option>
-                </select>
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-400 uppercase block">Height (cm)</label>
-                <input type="number" value={profForm.height} onChange={e => setProfForm({...profForm, height: parseFloat(e.target.value)})} className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 outline-none text-sm focus:border-green-300 transition-all" />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-400 uppercase block">Weight (kg)</label>
-                <input type="number" value={profForm.weight} onChange={e => setProfForm({...profForm, weight: parseFloat(e.target.value)})} className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 outline-none text-sm focus:border-green-300 transition-all" />
-              </div>
-              <div className="col-span-1 md:col-span-2 space-y-1">
-                <label className="text-xs font-bold text-slate-400 uppercase block">Activity Level</label>
-                <select value={profForm.activity_level} onChange={e => setProfForm({...profForm, activity_level: e.target.value})} className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 outline-none text-sm focus:border-green-300 transition-all">
-                  <option value="sedentary">Sedentary (Office job)</option>
-                  <option value="light">Light (1-3 days/week)</option>
-                  <option value="moderate">Moderate (3-5 days/week)</option>
-                  <option value="active">Active (6-7 days/week)</option>
-                  <option value="very_active">Extra Active (Physical job)</option>
-                </select>
-              </div>
-              <div className="col-span-1 md:col-span-2 space-y-1">
-                <label className="text-xs font-bold text-slate-400 uppercase block">Goal</label>
-                <select value={profForm.goal} onChange={e => setProfForm({...profForm, goal: e.target.value})} className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 outline-none text-sm focus:border-green-300 transition-all">
-                  <option value="lose">Weight Loss</option>
-                  <option value="maintain">Maintenance</option>
-                  <option value="gain">Muscle Gain</option>
-                </select>
-              </div>
-            </div>
-            <div className="flex gap-4">
-              <button onClick={() => setShowProfileModal(false)} className="flex-1 py-4 text-sm font-bold text-slate-400 hover:text-slate-600 transition-colors">Cancel</button>
-              <button onClick={saveProfile} className="flex-1 py-4 bg-green-500 text-white rounded-2xl text-sm font-bold shadow-lg shadow-green-200 hover:bg-green-600 transition-all">Save Profile</button>
-            </div>
-          </motion.div>
-        </div>
-      )}
       <AnimatePresence>
         {toast && (
           <motion.div key={toast.id} initial={{ opacity: 0, y: -12, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -8 }} role="status" aria-live="polite" className={`fixed top-24 right-5 z-[70] max-w-sm rounded-2xl px-5 py-4 text-sm font-semibold text-white shadow-xl ${toast.type === 'error' ? 'bg-rose-600' : toast.type === 'info' ? 'bg-slate-800' : 'bg-emerald-600'}`}>

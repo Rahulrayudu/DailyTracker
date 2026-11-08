@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, Index, Time
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime
 
@@ -19,6 +19,19 @@ class Profile(Base):
     carb_target = Column(Float)
     fat_target = Column(Float)
     water_target = Column(Float)
+    target_weight_kg = Column(Float, nullable=True)
+    bmr = Column(Float, nullable=True)
+    maintenance_calories = Column(Float, nullable=True)
+    bmi = Column(Float, nullable=True)
+    routine_timezone = Column(String, nullable=False, default="Asia/Kolkata")
+    wake_time = Column(Time, nullable=True)
+    work_start_time = Column(Time, nullable=True)
+    work_end_time = Column(Time, nullable=True)
+    breakfast_time = Column(Time, nullable=True)
+    lunch_time = Column(Time, nullable=True)
+    snack_time = Column(Time, nullable=True)
+    dinner_time = Column(Time, nullable=True)
+    sleep_time = Column(Time, nullable=True)
 
 class FoodItem(Base):
     __tablename__ = "food_items"
@@ -30,6 +43,17 @@ class FoodItem(Base):
     fats = Column(Float)
     fiber = Column(Float, default=0)
     serving_size = Column(String) # e.g., "100g"
+    source = Column(String, nullable=False, default="LocalHealth curated")
+    source_version = Column(String, nullable=True)
+    external_id = Column(String, nullable=True)
+
+Index("uq_food_source_external_id", FoodItem.source, FoodItem.external_id, unique=True)
+
+class FoodFavorite(Base):
+    __tablename__ = "food_favorites"
+    id = Column(Integer, primary_key=True)
+    food_item_id = Column(Integer, ForeignKey("food_items.id"), nullable=False, unique=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 class HealthLog(Base):
     __tablename__ = "health_logs"
@@ -37,6 +61,7 @@ class HealthLog(Base):
     category = Column(String) 
     value = Column(Float, nullable=True)
     note = Column(Text)
+    food_item_id = Column(Integer, ForeignKey("food_items.id"), nullable=True, index=True)
     calories = Column(Float, default=0)
     protein = Column(Float, default=0)
     carbs = Column(Float, default=0)
