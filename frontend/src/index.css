@@ -127,6 +127,20 @@ h1, h2, h3, h4 { font-family: var(--font-display); letter-spacing: -.035em; }
   border-color: rgba(52,245,197,.65);
   box-shadow: 0 0 0 3px rgba(52,245,197,.12), var(--glow);
 }
+#root input.home-date-picker[type="date"] {
+  appearance: auto;
+  background: transparent !important;
+  background-color: transparent !important;
+  border: 0;
+  border-radius: 10px;
+  box-shadow: none;
+  color: var(--text);
+  color-scheme: dark;
+  min-width: 145px;
+  padding: 6px 8px;
+}
+#root input.home-date-picker[type="date"]:focus { border: 0; box-shadow: 0 0 0 2px rgba(52,245,197,.22); }
+#root input.home-date-picker[type="date"]::-webkit-calendar-picker-indicator { cursor: pointer; opacity: .82; }
 #root select option { background: var(--surface); color: var(--text); }
 #root button { min-height: 44px; transition: transform .18s ease, box-shadow .2s ease, filter .2s ease; }
 #root button:hover { filter: brightness(1.08); }
@@ -248,6 +262,11 @@ h1, h2, h3, h4 { font-family: var(--font-display); letter-spacing: -.035em; }
 .workout-set-entry { display: grid; gap: 4px; }
 .workout-previous-set { margin: 0 0 0 44px; color: #8E9AB4; font-size: .65rem; line-height: 1.4; }
 .workout-progress-card { min-width: 0; padding: 16px; border: 1px solid rgba(255,255,255,.08); border-radius: 18px; background: rgba(7,11,20,.28); }
+.workout-pr-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.workout-pr-grid article { min-width: 0; padding: 14px 16px; border: 1px solid rgba(52,245,197,.16); border-radius: 16px; background: linear-gradient(145deg, rgba(52,245,197,.08), rgba(56,189,248,.035)); }
+.workout-pr-grid article > span { display: block; color: var(--muted); font-size: .65rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.workout-pr-grid article > strong { display: block; margin-top: 8px; color: var(--primary); font-size: 1.45rem; line-height: 1.1; font-weight: 800; }
+.workout-pr-grid article > p { margin: 6px 0 0; color: var(--muted); font-size: .68rem; }
 .workout-progress-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
 .workout-progress-card-heading h4 { margin: 0; font-size: .9rem; font-weight: 800; }
 .workout-progress-card-heading span { color: var(--muted); font-size: .68rem; font-weight: 700; }

@@ -879,7 +879,7 @@ def get_workout_sessions(
     result = []
     for session in sessions:
         set_rows = (
-            db.query(WorkoutSet, Exercise.name)
+            db.query(WorkoutSet, Exercise.name, Exercise.muscle_group)
             .outerjoin(Exercise, Exercise.id == WorkoutSet.exercise_id)
             .filter(WorkoutSet.session_id == session.id)
             .order_by(WorkoutSet.set_number)
@@ -893,12 +893,65 @@ def get_workout_sessions(
             "calories_burned": session.calories_burned,
             "note": session.note,
             "sets": [
-                {"exercise_id": item.exercise_id, "exercise_name": name, "set_number": item.set_number, "reps": item.reps,
+                {"exercise_id": item.exercise_id, "exercise_name": name, "muscle_group": muscle_group, "set_number": item.set_number, "reps": item.reps,
                  "weight": item.weight, "rpe": item.rpe}
-                for item, name in set_rows
+                for item, name, muscle_group in set_rows
             ],
         })
     return result
+
+@app.get("/workouts/records")
+def get_workout_records(db: Session = Depends(get_db)):
+    rows = (
+        db.query(WorkoutSet, WorkoutSession.date, Exercise.name)
+        .join(WorkoutSession, WorkoutSession.id == WorkoutSet.session_id)
+        .join(Exercise, Exercise.id == WorkoutSet.exercise_id)
+        .filter(WorkoutSet.reps > 0)
+        .order_by(WorkoutSession.date.asc(), WorkoutSet.set_number.asc())
+        .all()
+    )
+    records = {}
+    for workout_set, session_date, exercise_name in rows:
+        exercise_id = workout_set.exercise_id
+        record = records.setdefault(exercise_id, {
+            "exercise_id": exercise_id,
+            "exercise_name": exercise_name,
+            "best_load_kg": None,
+            "best_load_reps": None,
+            "best_load_date": None,
+            "best_reps": None,
+            "best_reps_load_kg": None,
+            "best_reps_date": None,
+            "session_ids": set(),
+        })
+        record["session_ids"].add(workout_set.session_id)
+        reps = int(workout_set.reps)
+        weight = float(workout_set.weight) if workout_set.weight is not None else None
+
+        if weight is not None and (
+            record["best_load_kg"] is None
+            or weight > record["best_load_kg"]
+            or (weight == record["best_load_kg"] and reps > (record["best_load_reps"] or 0))
+        ):
+            record["best_load_kg"] = weight
+            record["best_load_reps"] = reps
+            record["best_load_date"] = session_date
+
+        current_rep_weight = record["best_reps_load_kg"]
+        if record["best_reps"] is None or reps > record["best_reps"] or (
+            reps == record["best_reps"]
+            and weight is not None
+            and (current_rep_weight is None or weight > current_rep_weight)
+        ):
+            record["best_reps"] = reps
+            record["best_reps_load_kg"] = weight
+            record["best_reps_date"] = session_date
+
+    response = []
+    for record in sorted(records.values(), key=lambda item: item["exercise_name"].casefold()):
+        record["session_count"] = len(record.pop("session_ids"))
+        response.append(record)
+    return response
 
 @app.get("/ai/parse-live")
 async def parse_live(text: str):

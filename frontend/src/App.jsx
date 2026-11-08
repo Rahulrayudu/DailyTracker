@@ -35,6 +35,19 @@ function istRangeStart(days) {
   return Date.UTC(Number(dateParts.year), Number(dateParts.month) - 1, Number(dateParts.day) - (days - 1)) - (330 * 60 * 1000);
 }
 
+function indiaDateString(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date);
+  const dateParts = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
+}
+
+function addCalendarDays(dateString, offset) {
+  const [year, month, day] = dateString.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day + offset)).toISOString().slice(0, 10);
+}
+
 const MacroCard = ({ label, value, target, unit, color, icon }) => {
   const percent = Math.min((value / (target || 1)) * 100, 100);
   const Icon = icon;
@@ -171,7 +184,7 @@ function WorkoutProgressChart({ title, points, color, unit, emptyMessage }) {
   );
 }
 
-function InsightsTab({ data, loading, days, onDaysChange, sessions = [] }) {
+function InsightsTab({ data, loading, days, onDaysChange, sessions = [], records = [] }) {
   const [selectedExerciseId, setSelectedExerciseId] = useState('');
   const daily = data?.daily || [];
   const summary = data?.summary || {};
@@ -225,6 +238,57 @@ function InsightsTab({ data, loading, days, onDaysChange, sessions = [] }) {
     .sort((a, b) => parseWorkoutTimestamp(a.date).getTime() - parseWorkoutTimestamp(b.date).getTime()) : [];
   const loadProgressPoints = exerciseProgress.filter(point => point.bestWeight != null).map(point => ({ ...point, value: point.bestWeight }));
   const repProgressPoints = exerciseProgress.map(point => ({ ...point, value: point.bestReps }));
+  const selectedPersonalRecord = selectedExercise
+    ? records.find(record => String(record.exercise_id) === selectedExercise.id)
+    : null;
+  const workoutVolumePoints = inRangeSessions.map(session => {
+    const volume = (session.sets || []).reduce((total, set) => {
+      if (set.weight == null || Number(set.reps) <= 0 || !Number.isFinite(Number(set.weight))) return total;
+      return total + Number(set.weight) * Number(set.reps);
+    }, 0);
+    return volume > 0 ? {
+      date: session.date,
+      label: parseWorkoutTimestamp(session.date).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric', timeZone: 'Asia/Kolkata' }),
+      value: Math.round(volume),
+    } : null;
+  }).filter(Boolean).sort((a, b) => parseWorkoutTimestamp(a.date).getTime() - parseWorkoutTimestamp(b.date).getTime());
+  const firstRangeDate = indiaDateString(new Date(workoutCutoff));
+  const weeklyBuckets = new Map();
+  for (let offset = 0; offset < days; offset += 1) {
+    const date = addCalendarDays(firstRangeDate, offset);
+    const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
+    const weekStart = addCalendarDays(date, -((weekday + 6) % 7));
+    const bucket = weeklyBuckets.get(weekStart) || { weekStart, rangeDays: 0, sessions: 0 };
+    bucket.rangeDays += 1;
+    weeklyBuckets.set(weekStart, bucket);
+  }
+  inRangeSessions.forEach(session => {
+    const date = indiaDateString(parseWorkoutTimestamp(session.date));
+    const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
+    const weekStart = addCalendarDays(date, -((weekday + 6) % 7));
+    const bucket = weeklyBuckets.get(weekStart);
+    if (bucket) bucket.sessions += 1;
+  });
+  const weeklyTrainingPoints = [...weeklyBuckets.values()].sort((a, b) => a.weekStart.localeCompare(b.weekStart)).map(bucket => ({
+    date: bucket.weekStart,
+    label: `Wk ${new Date(`${bucket.weekStart}T00:00:00Z`).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric', timeZone: 'UTC' })}`,
+    value: bucket.sessions,
+  }));
+  const muscleVolumeByGroup = new Map();
+  inRangeSessions.forEach(session => (session.sets || []).forEach(set => {
+    if (Number(set.reps) <= 0 || !set.muscle_group) return;
+    const group = muscleVolumeByGroup.get(set.muscle_group) || { muscle_group: set.muscle_group, sets: 0, reps: 0, loadVolume: 0, loadedSets: 0 };
+    const reps = Number(set.reps);
+    group.sets += 1;
+    group.reps += reps;
+    if (set.weight != null && Number.isFinite(Number(set.weight))) {
+      group.loadVolume += Number(set.weight) * reps;
+      group.loadedSets += 1;
+    }
+    muscleVolumeByGroup.set(set.muscle_group, group);
+  }));
+  const muscleVolumeRows = [...muscleVolumeByGroup.values()].sort((a, b) => b.sets - a.sets || a.muscle_group.localeCompare(b.muscle_group));
+  const maxMuscleSets = Math.max(1, ...muscleVolumeRows.map(group => group.sets));
 
   return (
     <div className="space-y-8">
@@ -297,11 +361,18 @@ function InsightsTab({ data, loading, days, onDaysChange, sessions = [] }) {
               </label>}
             </div>
             {!exerciseOptions.length ? <p className="rounded-xl bg-slate-900/40 p-8 text-center text-sm text-slate-400">No completed exercise sets in this period yet. Finish a tracked workout to see your progress here.</p> : (
-              <div className="grid gap-4 lg:grid-cols-2">
-                <WorkoutProgressChart title="Best logged load" points={loadProgressPoints} color="#38BDF8" unit="kg" emptyMessage="No external load recorded for this exercise. Reps are charted alongside." />
-                <WorkoutProgressChart title="Best set reps" points={repProgressPoints} color="#34F5C5" unit="reps" emptyMessage="No completed reps recorded for this exercise in this period." />
-              </div>
+              <>
+                <div className="workout-pr-grid">
+                  <article><span>All-time load PR</span><strong>{selectedPersonalRecord?.best_load_kg != null ? `${selectedPersonalRecord.best_load_kg} kg` : '—'}</strong><p>{selectedPersonalRecord?.best_load_date ? `Logged ${parseWorkoutTimestamp(selectedPersonalRecord.best_load_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Kolkata' })}` : 'No external load recorded yet'}</p></article>
+                  <article><span>All-time rep PR</span><strong>{selectedPersonalRecord?.best_reps != null ? `${selectedPersonalRecord.best_reps} reps` : '—'}</strong><p>{selectedPersonalRecord?.best_reps_date ? `Logged ${parseWorkoutTimestamp(selectedPersonalRecord.best_reps_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Kolkata' })}` : 'No completed rep sets recorded yet'}</p></article>
+                </div>
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <WorkoutProgressChart title="Best logged load" points={loadProgressPoints} color="#38BDF8" unit="kg" emptyMessage="No external load recorded for this exercise. Reps are charted alongside." />
+                  <WorkoutProgressChart title="Best set reps" points={repProgressPoints} color="#34F5C5" unit="reps" emptyMessage="No completed reps recorded for this exercise in this period." />
+                </div>
+              </>
             )}
+            <div className="mt-5"><div className="mb-2"><h4 className="text-sm font-extrabold">Loaded workout volume</h4><p className="mt-1 text-xs text-slate-500">Total reps × logged load per session · bodyweight-only sets are excluded.</p></div><WorkoutProgressChart title="Volume by workout" points={workoutVolumePoints} color="#A78BFA" unit="kg × reps" emptyMessage="Log reps and load for weighted sets to see session volume." /></div>
           </section>
         </>
       )}
@@ -573,7 +644,15 @@ export default function App() {
   const [recentFoods, setRecentFoods] = useState([]);
   const [foodListMode, setFoodListMode] = useState('search');
   const [foodCollectionsLoading, setFoodCollectionsLoading] = useState(false);
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(() => indiaDateString());
+  const [todayDate, setTodayDate] = useState(() => indiaDateString());
+  const selectCalendarDate = value => {
+    if (value) setSelectedDate(value > indiaDateString() ? indiaDateString() : value);
+  };
+  const moveSelectedDate = offset => {
+    const nextDate = addCalendarDays(selectedDate, offset);
+    setSelectedDate(nextDate > indiaDateString() ? indiaDateString() : nextDate);
+  };
   const [profForm, setProfForm] = useState({ ...DEFAULT_PROFILE_FORM });
   const [profileDirty, setProfileDirty] = useState(false);
   const [profileSaving, setProfileSaving] = useState(false);
@@ -608,6 +687,7 @@ export default function App() {
   const [exerciseEquipment, setExerciseEquipment] = useState('Any');
   const [selectedMuscle, setSelectedMuscle] = useState('Chest');
   const [workoutSessions, setWorkoutSessions] = useState([]);
+  const [workoutRecords, setWorkoutRecords] = useState([]);
   const [activeWorkout, setActiveWorkout] = useState(null);
   const [workoutElapsed, setWorkoutElapsed] = useState(0);
   const [workoutSaving, setWorkoutSaving] = useState(false);
@@ -623,6 +703,17 @@ export default function App() {
   const [foodServings, setFoodServings] = useState('1');
   const [manualEntryOpen, setManualEntryOpen] = useState(false);
   const [manualFood, setManualFood] = useState({ name: '', portion: '1 serving', calories: '', protein: '', carbs: '', fats: '', fiber: '' });
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const currentToday = indiaDateString();
+      if (currentToday !== todayDate) {
+        setTodayDate(currentToday);
+        setSelectedDate(current => current === todayDate ? currentToday : current > currentToday ? currentToday : current);
+      }
+    }, 60_000);
+    return () => clearInterval(timer);
+  }, [todayDate]);
 
   const notify = (message, type = 'success') => {
     setToast({ message, type, id: Date.now() });
@@ -1183,6 +1274,9 @@ export default function App() {
     axios.get(`${API_BASE}/workouts/sessions?limit=100`)
       .then(response => { if (!cancelled) setWorkoutSessions(response.data); })
       .catch(error => { if (!cancelled) console.error('Exercise progress loading error:', error); });
+    axios.get(`${API_BASE}/workouts/records`)
+      .then(response => { if (!cancelled) setWorkoutRecords(response.data); })
+      .catch(error => { if (!cancelled) console.error('Personal record loading error:', error); });
     return () => { cancelled = true; };
   }, [activeTab]);
 
@@ -1547,22 +1641,15 @@ export default function App() {
                     </div>
                     <div className="flex flex-wrap items-center gap-3">
                       <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-2xl border border-slate-100">
-                      <button onClick={() => {
-                        const d = new Date(selectedDate);
-                        d.setDate(d.getDate() - 1);
-                        setSelectedDate(d.toISOString().split('T')[0]);
-                      }} aria-label="Previous day" className="p-2 text-slate-400 hover:text-green-600 transition-colors"><ArrowLeft size={17} /></button>
+                      <button type="button" onClick={() => moveSelectedDate(-1)} aria-label="Previous day" className="p-2 text-slate-400 hover:text-green-600 transition-colors"><ArrowLeft size={17} /></button>
                       <input 
                         type="date" 
                         value={selectedDate} 
-                        onChange={e => setSelectedDate(e.target.value)}
-                        className="text-sm font-bold text-slate-600 bg-transparent outline-none text-center cursor-pointer"
+                        max={todayDate}
+                        onChange={e => selectCalendarDate(e.target.value)}
+                        className="home-date-picker text-sm font-bold text-slate-600 bg-transparent outline-none text-center cursor-pointer"
                       />
-                      <button onClick={() => {
-                        const d = new Date(selectedDate);
-                        d.setDate(d.getDate() + 1);
-                        setSelectedDate(d.toISOString().split('T')[0]);
-                      }} aria-label="Next day" className="p-2 text-slate-400 hover:text-green-600 transition-colors"><ChevronDown size={17} className="-rotate-90" /></button>
+                      <button type="button" onClick={() => moveSelectedDate(1)} disabled={selectedDate >= todayDate} aria-label="Next day" className="p-2 text-slate-400 hover:text-green-600 transition-colors disabled:cursor-not-allowed disabled:opacity-35"><ChevronDown size={17} className="-rotate-90" /></button>
                       </div>
                       <button onClick={() => setShowLogPage(true)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-green-500 px-4 py-3 text-sm font-extrabold text-slate-950"><Plus size={17} />Log food</button>
                     </div>
@@ -1875,7 +1962,7 @@ export default function App() {
               )}
 
               {activeTab === 'insights' && (
-                <InsightsTab data={insightData} loading={insightsLoading} days={insightDays} onDaysChange={setInsightDays} sessions={workoutSessions} />
+                <InsightsTab data={insightData} loading={insightsLoading} days={insightDays} onDaysChange={setInsightDays} sessions={workoutSessions} records={workoutRecords} />
               )}
             </motion.div>
           )}
