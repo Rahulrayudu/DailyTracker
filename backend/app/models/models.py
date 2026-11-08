@@ -46,6 +46,18 @@ class HealthLog(Base):
     source = Column(String, default="user")
     timestamp = Column(DateTime, default=datetime.utcnow)
 
+class WaterLog(Base):
+    __tablename__ = "water_logs"
+    id = Column(Integer, primary_key=True, index=True)
+    amount_ml = Column(Integer, nullable=False)
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+
+class WeightLog(Base):
+    __tablename__ = "weight_logs"
+    id = Column(Integer, primary_key=True, index=True)
+    weight_kg = Column(Float, nullable=False)
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+
 class Exercise(Base):
     __tablename__ = "exercises"
     id = Column(Integer, primary_key=True, index=True)

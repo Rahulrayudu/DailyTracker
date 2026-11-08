@@ -2,32 +2,27 @@ import ollama
 import json
 import re
 import asyncio
+from .core.config import settings
 
 class HealthAI:
-    def __init__(self, model_name="llama3.1"):
-        self.model_name = model_name
+    def __init__(self, model_name=None):
+        self.model_name = model_name or settings.DEFAULT_MODEL
+        self.ollama_url = settings.OLLAMA_URL.rstrip("/")
 
     async def parse_food_live(self, food_text):
-        """
-        Provides 'live' tokens/chips for the UI. 
-        Identifies foods and quantities without calculating full nutrition yet.
-        """
-        prompt = f"""
-        Extract foods and quantities from: "{food_text}"
-        Return ONLY a JSON list of objects: [{{"item": "food name", "quantity": "amount"}}]
-        Example: "2 bananas and a glass of milk" -> [{{"item": "banana", "quantity": "2 pieces"}}, {{"item": "milk", "quantity": "1 glass"}}]
-        If nothing found, return [].
-        """
-        try:
-            response = ollama.chat(model=self.model_name, messages=[{'role': 'user', 'content': prompt}])
-            content = response['message']['content']
-            match = re.search(r'\[.*\]', content, re.DOTALL)
-            if match:
-                return json.loads(match.group(0))
-            return []
-        except Exception as e:
-            print(f"Live Parsing Error: {e}")
-            return []
+        """Fast local chips; reserve the single Ollama model call for confirmation."""
+        foods = ("apple", "banana", "orange", "rice", "roti", "chapati", "dal", "egg",
+                 "paneer", "chicken", "milk", "curd", "yogurt", "idli", "dosa", "oats")
+        text = food_text.lower()
+        chips = []
+        for item in foods:
+            match = re.search(rf"\b{re.escape(item)}s?\b", text)
+            if not match:
+                continue
+            before = text[max(0, match.start() - 20):match.start()]
+            quantity = re.search(r"(\d+(?:\.\d+)?\s*(?:g|kg|ml|l|pieces?|cups?|katori|medium|small|large)?)\s*$", before)
+            chips.append({"item": item, "quantity": quantity.group(1).strip() if quantity else "amount needed"})
+        return chips
 
     async def parse_food(self, food_text):
         """
@@ -85,7 +80,8 @@ Return only the required JSON object."""
             model=self.model_name,
             messages=[{"role": "user", "content": prompt}],
             format=schema,
-            options={"temperature": 0}
+            options={"temperature": 0, "num_predict": 180},
+            keep_alive="10m"
         )
         content = response.get("message", {}).get("content", "")
         try:

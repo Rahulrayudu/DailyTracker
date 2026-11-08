@@ -33,6 +33,28 @@ Still planned or incomplete:
 - Authentication, installable/offline PWA support, scheduled backups, data
   export, and Mac auto-start configuration.
 - Automated backend and browser regression tests.
+- Fitbit and Pixel Watch data sync through the Google Health API (final planned
+  integration phase; not implemented yet).
+
+### Final planned phase: Google Health API / Fitbit sync
+
+Use Google's current **Google Health API**, the successor to the Fitbit Web
+API, to let the user explicitly connect a Google account and import selected
+Fitbit data. The first release should focus on daily steps, activity/workout
+summaries, heart-rate summaries, sleep, and weight where available. The user
+must be able to choose which data is synced, see the last sync time, retry or
+disconnect, and delete imported records. Keep credentials out of source
+control, store refresh tokens securely on the Mac, and keep imported records in
+the local database. Do not send wearable history to an AI model by default.
+
+Implementation depends on registering a Google Cloud project, enabling the
+Google Health API, configuring OAuth consent and redirect URIs, and confirming
+the API's currently available data types and access requirements. Use Google's
+[setup guide](https://developers.google.com/health/setup), [data access and
+authorization guide](https://developers.google.com/health/migration/data-access),
+and [API data types](https://developers.google.com/health/data-types) when this
+phase begins. This is a cloud OAuth/data connection, while the app's database
+and day-to-day processing can remain on the Mac.
 
 Nutrition values in the included food catalog are reference estimates. AI
 nutrition is an estimate too; review it before saving. This app is informational
@@ -84,12 +106,12 @@ manager and rerun the commands with that Python executable.
 ### 2. Install the local AI model (optional for non-AI logging)
 
 ```sh
-ollama pull llama3.1
+ollama pull gemma3:4b
 ollama list
 ```
 
-Ollama must be running locally when you use AI features. The current model name
-is configured in `backend/app/ai_engine.py` as `llama3.1`.
+Ollama must be running locally when you use AI features. The backend defaults
+to `gemma3:4b`, which can be changed with `LOCALHEALTH_OLLAMA_MODEL`.
 
 ### 3. Install frontend dependencies
 
@@ -176,6 +198,7 @@ the default CORS origins instead.
 | `LOCALHEALTH_DATABASE_URL` | `sqlite:///./health_pro.db` | SQLAlchemy database URL; relative SQLite paths resolve from the backend process working directory. |
 | `LOCALHEALTH_CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated list of allowed frontend origins. |
 | `VITE_API_BASE_URL` | `http://localhost:8000` | API origin used by the frontend at build/dev time. |
+| `LOCALHEALTH_OLLAMA_MODEL` | `gemma3:4b` | Exact Ollama model tag used by food parsing and the coach. |
 
 Create a local `.env` or `.env.local` only if you add environment-file loading;
 the current app reads these settings from the process environment. Do not

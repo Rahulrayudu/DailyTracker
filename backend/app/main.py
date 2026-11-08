@@ -1,14 +1,17 @@
 import os
+import json
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+import httpx
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import date
 from .database import get_db, init_db
-from .models.models import Profile, HealthLog, FoodItem, Exercise, WorkoutSession, WorkoutSet
+from .models.models import Profile, HealthLog, FoodItem, Exercise, WorkoutSession, WorkoutSet, WaterLog, WeightLog
 from .ai_engine import ai_engine
 from .workout_service import workout_service
 from ..seed_db import seed_nutrition_db
@@ -50,6 +53,12 @@ class LogCreate(BaseModel):
 
 class FoodDraftRequest(BaseModel):
     text: str
+
+class WaterCreate(BaseModel):
+    amount_ml: int = Field(gt=0, le=5000)
+
+class WeightCreate(BaseModel):
+    weight_kg: float = Field(gt=0, le=700)
 
 @app.get("/")
 def read_root(): return {"status": "Online"}
@@ -146,6 +155,34 @@ def get_summary(db: Session = Depends(get_db), date_filter: Optional[date] = Non
         "by_meal": by_meal
     }
 
+@app.get("/tracking/daily")
+def get_daily_tracking(date_filter: Optional[date] = None, db: Session = Depends(get_db)):
+    water_query = db.query(WaterLog)
+    weight_query = db.query(WeightLog)
+    if date_filter:
+        water_query = water_query.filter(func.date(WaterLog.timestamp) == date_filter)
+        weight_query = weight_query.filter(func.date(WeightLog.timestamp) == date_filter)
+    water_logs = water_query.order_by(WaterLog.timestamp.desc()).all()
+    weight_logs = weight_query.order_by(WeightLog.timestamp.desc()).all()
+    return {
+        "water_total_ml": sum(log.amount_ml for log in water_logs),
+        "water_logs": water_logs,
+        "weight_logs": weight_logs,
+        "latest_weight_kg": weight_logs[0].weight_kg if weight_logs else None,
+    }
+
+@app.post("/tracking/water")
+def add_water(data: WaterCreate, db: Session = Depends(get_db)):
+    log = WaterLog(amount_ml=data.amount_ml)
+    db.add(log); db.commit(); db.refresh(log)
+    return log
+
+@app.post("/tracking/weight")
+def add_weight(data: WeightCreate, db: Session = Depends(get_db)):
+    log = WeightLog(weight_kg=data.weight_kg)
+    db.add(log); db.commit(); db.refresh(log)
+    return log
+
 # WORKOUT ENDPOINTS
 @app.get("/exercises")
 def get_exercises(db: Session = Depends(get_db)):
@@ -203,11 +240,38 @@ async def chat_with_coach(message: dict, db: Session = Depends(get_db)):
     logs_str = "\n".join([f"{l.category}: {l.value} {l.note}" for l in logs[-20:]])
     profile = db.query(Profile).first()
     prompt = f"User Profile: {profile}\nRecent Logs:\n{logs_str}\n\nUser asks: {user_query}\nAnswer as a professional health coach."
-    try:
-        response = await ai_engine.analyze_trends(prompt)
-        return {"response": response}
-    except:
-        return {"response": "I'm having trouble connecting to my brain. Please try again!"}
+    async def stream_response():
+        try:
+            async with httpx.AsyncClient(timeout=None) as client:
+                async with client.stream(
+                    "POST",
+                    f"{ai_engine.ollama_url}/api/chat",
+                    json={
+                        "model": ai_engine.model_name,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "stream": True,
+                        "keep_alive": "10m",
+                        "options": {"num_predict": 512},
+                    },
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line:
+                            continue
+                        chunk = json.loads(line)
+                        token = chunk.get("message", {}).get("content", "")
+                        if token:
+                            yield f"data: {json.dumps({'token': token})}\n\n"
+                        if chunk.get("done"):
+                            yield "data: [DONE]\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'error': f'Coach response failed: {exc}'})}\n\n"
+
+    return StreamingResponse(
+        stream_response(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

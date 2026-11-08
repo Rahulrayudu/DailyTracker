@@ -4,6 +4,7 @@ sqlalchemy>=2.0.0
 alembic
 pydantic>=2.0.0
 ollama
+httpx>=0.27.0
 python-jose[cryptography]
 passlib[bcrypt]
 python-multipart

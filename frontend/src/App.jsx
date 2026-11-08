@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
 
@@ -50,6 +50,9 @@ export default function App() {
   const [profile, setProfile] = useState(null);
   const [logs, setLogs] = useState([]);
   const [summary, setSummary] = useState({ total_calories: 0, total_protein: 0, total_carbs: 0, total_fats: 0, total_fiber: 0, by_meal: {} });
+  const [tracking, setTracking] = useState({ water_total_ml: 0, water_logs: [], weight_logs: [], latest_weight_kg: null });
+  const [waterAmount, setWaterAmount] = useState('250');
+  const [weightInput, setWeightInput] = useState('');
   const [input, setInput] = useState("");
   const [category, setCategory] = useState("nutrition");
   const [loading, setLoading] = useState(false);
@@ -57,6 +60,7 @@ export default function App() {
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [profForm, setProfForm] = useState({
     age: 25, sex: "male", height: 175, weight: 70, activity_level: "moderate", diet_type: "non-veg", goal: "maintain"
@@ -68,6 +72,7 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState([{ role: 'coach', text: "Hello! I'm your AI Health Coach. How can I help you today?" }]);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
+  const chatAbortRef = useRef(null);
 
   const [workoutPlan, setWorkoutPlan] = useState(null);
   const [workoutLoading, setWorkoutLoading] = useState(false);
@@ -99,15 +104,29 @@ export default function App() {
 
   const loadAllData = async (dateStr = selectedDate) => {
     try {
-      const [profRes, logsRes, sumRes] = await Promise.all([
+      const [profRes, logsRes, sumRes, trackingRes] = await Promise.all([
         axios.get(`${API_BASE}/profile`),
         axios.get(`${API_BASE}/logs?date_filter=${dateStr}`),
-        axios.get(`${API_BASE}/summary?date_filter=${dateStr}`)
+        axios.get(`${API_BASE}/summary?date_filter=${dateStr}`),
+        axios.get(`${API_BASE}/tracking/daily?date_filter=${dateStr}`)
       ]);
       setProfile(profRes.data);
       setLogs(logsRes.data);
       setSummary(sumRes.data);
+      setTracking(trackingRes.data);
     } catch (e) { console.error("Loading error", e); }
+  };
+
+  const addWater = async (amount = Number(waterAmount)) => {
+    try { await axios.post(`${API_BASE}/tracking/water`, { amount_ml: amount }); await loadAllData(); notify(`${amount} ml water logged.`); }
+    catch (e) { notify(e.response?.data?.detail || 'Could not log water.', 'error'); }
+  };
+
+  const addWeight = async () => {
+    const value = Number(weightInput);
+    if (!value || value <= 0) { notify('Enter a valid weight in kilograms.', 'error'); return; }
+    try { await axios.post(`${API_BASE}/tracking/weight`, { weight_kg: value }); setWeightInput(''); await loadAllData(); notify('Weight entry saved.'); }
+    catch (e) { notify(e.response?.data?.detail || 'Could not save weight.', 'error'); }
   };
 
   const fetchAiChips = async (text) => {
@@ -192,11 +211,13 @@ export default function App() {
 
   const searchFood = async (q) => {
     setSearchQuery(q);
-    if (q.length < 2) { setSearchResults([]); return; }
+    if (q.length < 2) { setSearchResults([]); setSearchLoading(false); return; }
+    setSearchLoading(true);
     try {
       const res = await axios.get(`${API_BASE}/search-food?q=${encodeURIComponent(q)}`);
       setSearchResults(res.data);
     } catch (e) { console.error("Search error", e); notify('Food search is unavailable right now.', 'error'); }
+    finally { setSearchLoading(false); }
   };
 
   const selectFood = (food) => {
@@ -262,18 +283,70 @@ export default function App() {
     }
   };
 
+  const stopChat = () => chatAbortRef.current?.abort();
+
   const handleChat = async () => {
-    if (!chatInput) return;
-    const userMsg = { role: 'user', text: chatInput };
+    const message = chatInput.trim();
+    if (!message || chatLoading) return;
+    const userMsg = { role: 'user', text: message };
     setChatMessages(prev => [...prev, userMsg]);
     setChatInput("");
     setChatLoading(true);
+    const controller = new AbortController();
+    chatAbortRef.current = controller;
+    setChatMessages(prev => [...prev, { role: 'coach', text: '' }]);
     try {
-      const res = await axios.post(`${API_BASE}/coach/chat`, { text: userMsg.text });
-      setChatMessages(prev => [...prev, { role: 'coach', text: res.data.response }]);
+      const response = await fetch(`${API_BASE}/coach/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: message }),
+        signal: controller.signal
+      });
+      if (!response.ok || !response.body) throw new Error(`Coach request failed (${response.status})`);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let complete = false;
+      while (!complete) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split('\n\n');
+        buffer = events.pop() || '';
+        for (const event of events) {
+          const data = event.split('\n').find(line => line.startsWith('data: '))?.slice(6);
+          if (!data) continue;
+          if (data === '[DONE]') { complete = true; break; }
+          const payload = JSON.parse(data);
+          if (payload.error) throw new Error(payload.error);
+          if (payload.token) setChatMessages(prev => {
+            const next = [...prev];
+            const last = next[next.length - 1];
+            if (last?.role === 'coach') next[next.length - 1] = { ...last, text: last.text + payload.token };
+            return next;
+          });
+        }
+      }
     } catch (e) {
-      setChatMessages(prev => [...prev, { role: 'coach', text: "Sorry, my brain is resting. Try again!" }]);
-    } finally { setChatLoading(false); }
+      if (e.name === 'AbortError') {
+        setChatMessages(prev => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (last?.role === 'coach') next[next.length - 1] = { ...last, text: last.text || 'Response stopped.' };
+          return next;
+        });
+      } else {
+        setChatMessages(prev => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (last?.role === 'coach') next[next.length - 1] = { ...last, text: e.message || 'Sorry, I could not connect to the coach. Please try again.' };
+          return next;
+        });
+      }
+    } finally {
+      chatAbortRef.current = null;
+      setChatLoading(false);
+    }
   };
 
   const generateWorkout = async () => {
@@ -353,7 +426,7 @@ export default function App() {
                             <p className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm ${message.role === 'user' ? 'bg-green-600 text-white rounded-br-sm' : 'bg-green-50 text-slate-700 rounded-bl-sm'}`}>{message.text}</p>
                           </div>
                         ))}
-                        {foodThinking && <p className="text-xs text-green-700 animate-pulse">Checking portion and nutrition…</p>}
+                        {foodThinking && <div className="flex items-center gap-3 rounded-2xl bg-white/90 border border-green-100 px-4 py-3 text-sm text-slate-600 shadow-sm" role="status" aria-live="polite"><i className="w-4 h-4 shrink-0 rounded-full border-2 border-green-500/25 border-t-green-600 animate-spin"/><span>Understanding the food, checking the portion, and estimating nutrition…</span></div>}
                       </div>
                     )}
                     {foodDraft && (
@@ -413,7 +486,7 @@ export default function App() {
                           disabled={foodThinking || loading}
                           className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold transition-all ${loading ? 'bg-slate-300' : 'bg-green-500 hover:bg-green-600 shadow-lg shadow-green-200'}`}
                         >
-                          {foodThinking ? '…' : '↑'}
+                          {foodThinking ? <i className="w-5 h-5 rounded-full border-2 border-white/40 border-t-white animate-spin" aria-label="Thinking"/> : '↑'}
                         </button>
                       </div>
                     </div>
@@ -432,10 +505,11 @@ export default function App() {
                       placeholder="Search for a specific food..." 
                       className="w-full p-4 pl-12 bg-white rounded-2xl border border-slate-100 shadow-sm outline-none text-sm focus:border-green-300 transition-all"
                     />
-                    <span className="absolute left-4 top-4 text-slate-400 text-lg">🔍</span>
+                    <span className="absolute left-4 top-4 text-slate-400 text-lg">{searchLoading ? <i className="block w-4 h-4 rounded-full border-2 border-green-500/30 border-t-green-500 animate-spin"/> : '🔍'}</span>
                   </div>
                   <div className="max-h-[400px] overflow-y-auto space-y-3 pr-2">
-                    {searchResults.length === 0 && searchQuery.length >= 2 && <div className="text-center text-slate-400 text-sm py-10">No foods found in database.</div>}
+                    {searchLoading && <div className="flex items-center justify-center gap-3 text-slate-400 text-sm py-10"><i className="w-4 h-4 rounded-full border-2 border-green-500/30 border-t-green-500 animate-spin"/>Searching nutrition database…</div>}
+                    {!searchLoading && searchResults.length === 0 && searchQuery.length >= 2 && <div className="text-center text-slate-400 text-sm py-10">No foods found in database.</div>}
                     {searchResults.map(food => (
                       <div 
                         key={food.id} 
@@ -538,6 +612,19 @@ export default function App() {
                     <MacroCard label="Fiber" value={summary.total_fiber} target={28} unit="g" color="bg-[#A78BFA]" icon="🌾" />
                   </div>
 
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <section className="glass-card p-6 space-y-4">
+                      <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-widest text-slate-500">Hydration</p><p className="text-3xl font-extrabold mt-2">{(tracking.water_total_ml / 1000).toFixed(2)}<span className="text-sm text-slate-400 ml-2">L today</span></p></div><span className="text-3xl">💧</span></div>
+                      <div className="flex flex-wrap gap-2">{[150, 250, 500].map(amount => <button key={amount} onClick={() => addWater(amount)} className="glass-chip px-4 py-2 text-sm font-bold text-cyan-200">+{amount} ml</button>)}</div>
+                      <div className="flex gap-2"><input aria-label="Custom water amount in milliliters" type="number" min="1" value={waterAmount} onChange={e => setWaterAmount(e.target.value)} className="min-w-0 flex-1 rounded-xl border px-3 py-2"/><button onClick={() => addWater()} className="rounded-xl bg-green-500 px-4 py-2 text-sm font-bold">Log water</button></div>
+                    </section>
+                    <section className="glass-card p-6 space-y-4">
+                      <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-widest text-slate-500">Weight</p><p className="text-3xl font-extrabold mt-2">{tracking.latest_weight_kg ? `${tracking.latest_weight_kg.toFixed(1)}` : '—'}<span className="text-sm text-slate-400 ml-2">kg latest this day</span></p></div><span className="text-3xl">⚖️</span></div>
+                      <div className="flex gap-2"><input aria-label="Weight in kilograms" type="number" min="1" max="700" step="0.1" placeholder="Weight in kg" value={weightInput} onChange={e => setWeightInput(e.target.value)} className="min-w-0 flex-1 rounded-xl border px-3 py-2"/><button onClick={addWeight} className="rounded-xl bg-green-500 px-4 py-2 text-sm font-bold">Save weight</button></div>
+                      <p className="text-xs text-slate-500">{tracking.weight_logs.length} weigh-in{tracking.weight_logs.length === 1 ? '' : 's'} recorded for this day.</p>
+                    </section>
+                  </div>
+
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
                     <div className="lg:col-span-2 space-y-6">
                       <div className="flex items-center justify-between mb-4">
@@ -619,17 +706,18 @@ export default function App() {
                         </div>
                       </div>
                     ))}
-                    {chatLoading && <div className="text-xs text-slate-400 animate-pulse px-4">Coach is thinking...</div>}
+                    {chatLoading && <div className="flex items-center gap-3 px-4 py-2 text-sm text-slate-400" role="status" aria-live="polite"><span className="flex gap-1"><i className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce [animation-delay:-0.2s]"/><i className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce [animation-delay:-0.1s]"/><i className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce"/></span>Coach is replying…</div>}
                   </div>
                   <div className="flex gap-3 p-3 bg-white rounded-full border border-slate-100 shadow-xl">
                     <input 
                       value={chatInput} 
                       onChange={e => setChatInput(e.target.value)}
-                      onKeyPress={e => e.key === 'Enter' && handleChat()}
+                      onKeyDown={e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleChat())}
+                      disabled={chatLoading}
                       placeholder="Ask your coach about nutrition or training..." 
                       className="flex-1 bg-transparent px-4 py-2 text-sm outline-none"
                     />
-                    <button onClick={handleChat} className="bg-green-500 text-white w-12 h-12 rounded-full flex items-center justify-center font-bold hover:bg-green-600 transition-all shadow-lg shadow-green-200">↑</button>
+                    {chatLoading ? <button onClick={stopChat} aria-label="Stop AI response" className="shrink-0 px-5 h-12 rounded-full bg-rose-500 text-white text-sm font-bold hover:bg-rose-600 transition-colors shadow-lg shadow-rose-200">■ Stop</button> : <button onClick={handleChat} disabled={!chatInput.trim()} aria-label="Send message" className="bg-green-500 text-white w-12 h-12 rounded-full flex items-center justify-center font-bold hover:bg-green-600 transition-all shadow-lg shadow-green-200 disabled:opacity-40 disabled:shadow-none">↑</button>}
                   </div>
                 </motion.div>
               )}
@@ -670,7 +758,7 @@ export default function App() {
                       disabled={workoutLoading}
                       className="px-16 py-5 bg-green-500 text-white rounded-full font-extrabold shadow-xl shadow-green-200 hover:bg-green-600 transition-all disabled:bg-slate-300 text-lg"
                     >
-                      {workoutLoading ? 'Designing your plan...' : 'Generate My Plan'}
+                      {workoutLoading ? <span className="inline-flex items-center justify-center gap-3"><i className="w-5 h-5 rounded-full border-2 border-white/40 border-t-white animate-spin"/>Building your plan…</span> : 'Generate My Plan'}
                     </button>
                   </div>
 

@@ -8,6 +8,6 @@ class Settings:
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 30 # 30 days
     DATABASE_URL: str = "sqlite:///./health_pro.db"
     OLLAMA_URL: str = "http://localhost:11434"
-    DEFAULT_MODEL: str = "llama3.1"
+    DEFAULT_MODEL: str = os.getenv("LOCALHEALTH_OLLAMA_MODEL", "gemma3:4b")
 
 settings = Settings()
