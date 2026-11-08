@@ -19,29 +19,35 @@ This is an actively developed single-user prototype. Implemented today:
   nutrition review before logging.
 - Persistent favorite foods and a recently logged catalog-food list.
 - Manual food entry and AI-assisted food logging with a clarification and
-  confirm-before-save flow.
+  confirm-before-save flow. Common catalog foods can use locally stored values
+  scaled to the stated amount; empty AI estimates are rejected before logging.
 - Meal assignment and per-meal nutrition totals.
 - A Profile tab for age, sex used by the BMR formula, height, current and
   target weight, activity level, food preference, and daily routine in India
-  Standard Time.
+  Standard Time, with editable meal-time suggestions based on wake, work, and
+  bedtime.
 - Estimated BMR, maintenance calories, goal calories, BMI screening value, and
   starter macro targets, plus a personalized seven-day calorie and activity
   schedule.
 - Basic AI coach chat and workout planning.
 - Searchable exercise library, equipment-filtered workout templates, active
   workout set logging, and recent workout history.
+- Insights dashboard with 7/30/90-day calorie, weigh-in, hydration, and workout
+  summaries grouped in IST.
+- Quick hydration logging and daily weight check-ins.
 - SQLite persistence, WAL mode, Alembic migrations, and local API health check.
-- Responsive Aurora Night visual theme.
+- Responsive Aurora Night visual theme with Lucide icons, an original SVG brand
+  mark/favicon, the classic bottom tab bar, and collapsible mobile nutrition and
+  profile sections.
 
 Still planned or incomplete:
 
 - Broader Indian recipe coverage, saved meals, and photo logging. An optional
   offline USDA Foundation Foods importer is available.
-- Water and weight tracking are implemented. Sleep, mood, steps, and other
-  activity tracking remain planned.
+- Sleep, mood, steps, and other activity tracking remain planned.
 - Advanced workout progression, exercise demonstrations, and personalized
   injury accommodations.
-- Meal planning, grocery lists, insights, reports, and reminders.
+- Meal planning, grocery lists, deeper cross-signal reports, and reminders.
 - Trend-based calorie target adjustments and richer meal-planning guidance.
 - Authentication, installable/offline PWA support, scheduled backups, data
   export, and Mac auto-start configuration.
@@ -255,7 +261,7 @@ the default CORS origins instead.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `LOCALHEALTH_DATABASE_URL` | `sqlite:///./health_pro.db` | SQLAlchemy database URL; relative SQLite paths resolve from the backend process working directory. |
-| `LOCALHEALTH_CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated list of allowed frontend origins. |
+| `LOCALHEALTH_CORS_ORIGINS` | *(empty)* | Additional comma-separated frontend origins, such as the Mac's LAN address. Localhost origins stay enabled for development. |
 | `VITE_API_BASE_URL` | `http://localhost:8000` | API origin used by the frontend at build/dev time. |
 | `LOCALHEALTH_OLLAMA_MODEL` | `gemma3:4b` | Exact Ollama model tag used by food parsing and the coach. |
 
@@ -333,6 +339,7 @@ and data export tool are planned but not implemented yet.
 | `GET` | `/health` | API health check. |
 | `GET`, `POST` | `/profile` | Read or update the profile, routine, and calculated health targets. |
 | `GET` | `/profile/weekly-plan` | Build the next seven days of calorie, meal-time, and activity guidance in IST. |
+| `GET` | `/insights?days=7` | Aggregate nutrition, weight, water, and workout trends for 7–90 days. |
 | `GET` | `/search-food?q=...` | Search the local food catalog. |
 | `GET` | `/foods/favorites` | List favorite catalog foods. |
 | `PUT`, `DELETE` | `/foods/{id}/favorite` | Add or remove a favorite. |

@@ -12,7 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend.app.database import get_db
-from backend.app.main import app
+from backend.app.main import CORSAwareFastAPI, app
 from backend.app.models.models import Base
 from backend.import_usda_foundation import load_foundation_rows
 
@@ -50,6 +50,22 @@ class CoreApiRegressionTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
+
+    def test_cors_header_is_preserved_on_backend_errors(self):
+        error_app = CORSAwareFastAPI(
+            title="CORS error test", cors_allowed_origins=["http://localhost:5173"]
+        )
+
+        @error_app.get("/raises")
+        def raise_error():
+            raise RuntimeError("test error")
+
+        client = TestClient(error_app, raise_server_exceptions=False)
+        response = client.get("/raises", headers={"Origin": "http://localhost:5173"})
+        client.close()
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.headers.get("access-control-allow-origin"), "http://localhost:5173")
 
     def test_nutrition_requires_complete_reviewable_values(self):
         response = self.client.post(
@@ -230,7 +246,7 @@ class CoreApiRegressionTests(unittest.TestCase):
         })
         logged = self.client.post("/logs", json={
             "category": "nutrition", "note": "Lunch", "meal": "Lunch",
-            "source": "user-edited", "calories": 1600, "protein": 90,
+            "source": "user-edited", "calories": 1700, "protein": 90,
             "carbs": 180, "fats": 50, "fiber": 20,
         })
         water = self.client.post("/tracking/water", json={"amount_ml": 400})
@@ -245,7 +261,7 @@ class CoreApiRegressionTests(unittest.TestCase):
         self.assertEqual(payload["timezone"], "Asia/Kolkata")
         self.assertEqual(len(payload["daily"]), 7)
         self.assertEqual(payload["summary"]["logged_days"], 1)
-        self.assertEqual(payload["summary"]["average_calories"], 1600)
+        self.assertEqual(payload["summary"]["average_calories"], 1700)
         self.assertEqual(payload["summary"]["goal_days"], 1)
         self.assertEqual(payload["summary"]["average_water_ml"], 400)
 

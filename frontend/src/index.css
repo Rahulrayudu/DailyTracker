@@ -133,27 +133,48 @@ h1, h2, h3, h4 { font-family: var(--font-display); letter-spacing: -.035em; }
 #root button:active { transform: scale(.97); }
 #root button:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 
-#root nav.fixed.bottom-0 {
+#root nav.app-tab-nav {
   background: transparent !important;
   border: 0 !important;
-  padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  padding: 0 12px calc(12px + env(safe-area-inset-bottom));
   pointer-events: none;
 }
-#root nav.fixed.bottom-0 > div {
+#root nav.app-tab-nav .tab-icon-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: max-content;
   max-width: calc(100vw - 24px);
-  padding: 6px 10px;
   gap: 6px;
-  border-radius: 24px;
+  padding: 6px 10px;
   border: 1px solid var(--border);
-  background: rgba(15,22,38,.78);
+  border-radius: 24px;
+  background: rgba(15,22,38,.88);
   box-shadow: 0 16px 50px rgba(0,0,0,.48), inset 0 1px 0 rgba(255,255,255,.1);
   -webkit-backdrop-filter: blur(24px) saturate(170%);
   backdrop-filter: blur(24px) saturate(170%);
   pointer-events: auto;
 }
-#root nav button { min-width: 76px; min-height: 54px; }
-#root nav button[class*="text-green-600"] { box-shadow: inset 0 0 0 1px rgba(52,245,197,.15), 0 0 24px rgba(52,245,197,.08); }
+#root nav.app-tab-nav .tab-icon-button { min-width: 76px; min-height: 54px; padding: 8px 12px; }
+#root nav.app-tab-nav .tab-icon-button span { font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+#root nav.app-tab-nav .tab-icon-button.is-active { box-shadow: inset 0 0 0 1px rgba(52,245,197,.15), 0 0 24px rgba(52,245,197,.08); }
+
+#root details > summary { list-style: none; cursor: pointer; }
+#root details > summary::-webkit-details-marker { display: none; }
+#root details > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: -3px; border-radius: 18px; }
+.profile-accordion { overflow: hidden; }
+.profile-accordion-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 24px; }
+.profile-accordion-summary > div { min-width: 0; }
+.profile-accordion-chevron, .nutrition-chevron { flex: 0 0 auto; color: var(--primary); transition: transform .2s ease; }
+.profile-accordion[open] > .profile-accordion-summary .profile-accordion-chevron,
+.nutrition-accordion[open] .nutrition-chevron { transform: rotate(180deg); }
+.profile-accordion[open] > .profile-accordion-summary { border-bottom: 1px solid var(--border); }
+.profile-accordion-content { padding: 20px 24px 24px; }
+.nutrition-accordion { overflow: hidden; }
+.nutrition-accordion-summary { display: flex; align-items: center; gap: 14px; min-height: 78px; padding: 14px 18px; }
+.nutrition-summary-icon { display: grid; place-items: center; width: 40px; height: 40px; flex: 0 0 auto; border: 1px solid rgba(255,138,101,.2); border-radius: 14px; background: rgba(255,138,101,.1); color: #FFAA82; }
+.nutrition-accordion[open] > .nutrition-accordion-summary { border-bottom: 1px solid var(--border); }
+.nutrition-accordion-content { padding: 16px; }
 
 #root .shadow-sm, #root .shadow-xl, #root .shadow-2xl { --tw-shadow-color: rgba(0,0,0,.28); }
 #root [class*="rounded-[2.5rem]"], #root [class*="rounded-[3rem]"] { border-radius: 28px; }
@@ -169,10 +190,40 @@ h1, h2, h3, h4 { font-family: var(--font-display); letter-spacing: -.035em; }
 }
 @media (min-width: 1024px) {
   .app-shell > main { max-width: 1320px; padding-top: 48px; }
-  #root nav.fixed.bottom-0 > div { gap: 14px; padding: 8px 14px; }
+  #root nav.app-tab-nav .tab-icon-bar { gap: 14px; padding: 8px 14px; }
 }
-@media (max-width: 640px) {
-  #root nav button { min-width: 58px; padding-left: 12px; padding-right: 12px; }
+@media (max-width: 767px) {
+  .app-shell { overflow-x: clip; padding-bottom: calc(92px + env(safe-area-inset-bottom)); }
+  #root main { padding-top: 20px; padding-bottom: 18px; }
+  #root input:not([type="checkbox"]):not([type="radio"]), #root select, #root textarea { font-size: 16px !important; }
+  #root nav.app-tab-nav { padding-left: 8px; padding-right: 8px; }
+  #root nav.app-tab-nav .tab-icon-bar { width: min(100%, 460px); justify-content: space-between; gap: 2px; padding: 5px; border-radius: 21px; }
+  #root nav.app-tab-nav .tab-icon-button { flex: 1 1 0; min-width: 0; min-height: 54px; padding: 6px 2px; border-radius: 15px; }
+  #root nav.app-tab-nav .tab-icon-button span { font-size: 9px; letter-spacing: .015em; }
+  #root .glass-card { border-radius: 19px; }
+  #root main [class*="rounded-[2rem]"], #root main [class*="rounded-[2.5rem]"], #root main [class*="rounded-[3rem]"] { border-radius: 20px; }
+  #root main [class~="p-8"] { padding: 20px !important; }
+  #root main [class~="p-7"], #root main [class~="p-6"] { padding: 16px !important; }
+  #root main [class~="px-8"] { padding-left: 18px !important; padding-right: 18px !important; }
+  #root .text-4xl { font-size: 1.875rem; line-height: 1.2; }
+  #root .text-3xl { font-size: 1.5rem; line-height: 1.25; }
+  #root .text-2xl { font-size: 1.3rem; line-height: 1.3; }
+  #root .profile-fields-grid { gap: 12px; }
+  .profile-accordion-summary { padding: 18px 16px; }
+  .profile-accordion-content { padding: 16px; }
+  .nutrition-accordion-summary { gap: 10px; min-height: 72px; padding: 12px; }
+  .nutrition-accordion-content { padding: 12px; }
+  #root .workout-set-row { grid-template-columns: 42px repeat(3, minmax(0, 1fr)); gap: 6px; }
+  #root .workout-set-row input { padding-left: 7px; padding-right: 7px; }
+  #root .coach-page { height: calc(100dvh - 280px); min-height: 320px; }
+  #root main .space-y-10 > :not([hidden]) ~ :not([hidden]) { margin-top: 1.5rem; }
+  #root main .space-y-8 > :not([hidden]) ~ :not([hidden]) { margin-top: 1.25rem; }
+  #root .toast-card { left: 12px; right: 12px; top: calc(72px + env(safe-area-inset-top)); max-width: none; }
+}
+@media (max-width: 360px) {
+  #root .profile-fields-grid { grid-template-columns: minmax(0, 1fr); }
+  #root main { padding-left: 12px; padding-right: 12px; }
+  #root .text-3xl { font-size: 1.375rem; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }

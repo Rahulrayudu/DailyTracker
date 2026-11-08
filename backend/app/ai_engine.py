@@ -1,5 +1,6 @@
 import ollama
 import json
+import math
 import re
 import asyncio
 from .core.config import settings
@@ -72,8 +73,8 @@ class HealthAI:
         }
         prompt = f"""You are helping log a meal. Analyze this entry: {food_text!r}
 
-If the amount is missing or too ambiguous to estimate, return status='clarification' and ask ONE concise, friendly question for the missing amount or preparation detail. Do not guess nutrition in this case; set all nutrient values to 0.
-If enough information is present, return status='ready'. Estimate nutrition for the TOTAL amount described, not per 100 g. Return calories (kcal), protein/carbs/fats/fiber (grams). Use reasonable standard food composition estimates. For fruit, state common assumptions in food_description (for example, medium apple with skin). Never return zero nutrients for a clearly specified ordinary food portion unless that value is genuinely zero.
+If the amount is missing, or preparation changes nutrition materially (for example, fried versus plain), return status='clarification' and ask ONE concise, friendly question. Do not guess nutrition in this case; set all nutrient values to 0.
+If enough information is present, return status='ready'. Estimate nutrition for the TOTAL amount described, not per 100 g. Return calories (kcal), protein/carbs/fats/fiber (grams). Use reasonable standard food-composition estimates. State any serving-size assumption in food_description. Treat a stated weight such as 100 g as the total edible amount. Never use zero as a placeholder: each nutrient should be nonzero when the food portion normally contains it, and calories must be greater than zero for a ready food entry.
 Return only the required JSON object."""
         response = await asyncio.to_thread(
             ollama.chat,
@@ -92,12 +93,28 @@ Return only the required JSON object."""
         required = ("status", "question", "food_description", "calories", "protein", "carbs", "fats", "fiber")
         if any(key not in result for key in required) or result["status"] not in {"ready", "clarification"}:
             raise ValueError("The nutrition model returned an incomplete result")
+        if not isinstance(result["food_description"], str):
+            raise ValueError("The nutrition model returned an invalid food description")
         for key in ("calories", "protein", "carbs", "fats", "fiber"):
             value = result[key]
-            if not isinstance(value, (int, float)) or value < 0:
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
                 raise ValueError(f"The nutrition model returned an invalid {key} value")
-        if result["status"] == "ready" and not any(result[key] > 0 for key in ("calories", "protein", "carbs", "fats", "fiber")):
-            raise ValueError("The nutrition model returned empty nutrition values")
+        if result["status"] == "clarification":
+            question = result["question"].strip() if isinstance(result["question"], str) else ""
+            return {
+                **result,
+                "question": question or "How much did you have, and how was it prepared?",
+                "source": "AI-estimated",
+                "confidence": "needs details",
+            }
+        if not result["food_description"].strip():
+            raise ValueError("The nutrition model returned an empty food description")
+        if result["calories"] <= 0 or not any(result[key] > 0 for key in ("protein", "carbs", "fats")):
+            raise ValueError("The nutrition model returned incomplete nutrition values")
+        if result["calories"] > 10000 or any(result[key] > 1000 for key in ("protein", "carbs", "fats", "fiber")):
+            raise ValueError("The nutrition model returned implausibly large values for one meal")
+        result["source"] = "AI-estimated"
+        result["confidence"] = "model estimate"
         return result
 
     async def analyze_trends(self, prompt_text):

@@ -15,6 +15,7 @@ from math import floor
 from .database import get_db, init_db
 from .models.models import Profile, HealthLog, FoodItem, FoodFavorite, Exercise, WorkoutSession, WorkoutSet, WaterLog, WeightLog
 from .ai_engine import ai_engine
+from .nutrition_service import catalog_food_draft
 from .workout_service import workout_service
 from ..seed_db import seed_nutrition_db
 import uvicorn
@@ -25,22 +26,41 @@ async def lifespan(app: FastAPI):
     seed_nutrition_db(initialize_schema=False)
     yield
 
-app = FastAPI(title="LocalHealth Pro", lifespan=lifespan)
+local_dev_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+configured_origins = [
+    origin.strip()
+    for origin in os.getenv("LOCALHEALTH_CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
+cors_origins = list(dict.fromkeys([*local_dev_origins, *configured_origins]))
 
-cors_origins = [origin.strip() for origin in os.getenv(
-    "LOCALHEALTH_CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
-).split(",") if origin.strip()]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=cors_origins,
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+
+class CORSAwareFastAPI(FastAPI):
+    """Keep CORS headers on both normal and unhandled-error responses."""
+
+    def __init__(self, *args, cors_allowed_origins, **kwargs):
+        self.cors_allowed_origins = cors_allowed_origins
+        super().__init__(*args, **kwargs)
+
+    def build_middleware_stack(self):
+        inner_app = super().build_middleware_stack()
+        return CORSMiddleware(
+            app=inner_app,
+            allow_origins=self.cors_allowed_origins,
+            allow_credentials=False,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+
+app = CORSAwareFastAPI(
+    title="LocalHealth Pro",
+    lifespan=lifespan,
+    cors_allowed_origins=cors_origins,
 )
 
-# Search aliases map familiar regional names to the catalog's canonical entry.
-# They affect discovery only; the item's serving and nutrition remain visible
-# for review before anything is logged.
+# Familiar and regional names resolve to canonical catalog entries for both
+# search and deterministic nutrition drafts. Values remain visible for review.
 FOOD_SEARCH_ALIASES = {
     "Roti": ("chapati", "chapathi", "phulka", "fulka"),
     "Dal": ("daal", "lentils", "pappu", "parippu"),
@@ -61,6 +81,16 @@ FOOD_SEARCH_ALIASES = {
     "Sambar": ("sambhar",),
     "Upma": ("uppittu",),
     "Poha": ("flattened rice", "aval", "atukulu"),
+    "Oats, dry": ("oats", "oatmeal"),
+    "Orange": ("oranges", "santara"),
+    "Avocado": ("avocados",),
+    "Sweet potato, boiled": ("sweet potato", "boiled sweet potato"),
+    "Potato, boiled": ("boiled potato",),
+    "Tofu, firm": ("tofu",),
+    "Peanut butter": ("peanut butter",),
+    "Spinach, cooked": ("cooked spinach",),
+    "Tomato": ("tomatoes",),
+    "Cucumber": ("cucumbers",),
 }
 
 class ProfileUpdate(BaseModel):
@@ -97,11 +127,11 @@ class LogCreate(BaseModel):
     category: str
     value: Optional[float] = None
     note: Optional[str] = None
-    calories: Optional[float] = Field(default=None, ge=0)
-    protein: Optional[float] = Field(default=None, ge=0)
-    carbs: Optional[float] = Field(default=None, ge=0)
-    fats: Optional[float] = Field(default=None, ge=0)
-    fiber: Optional[float] = Field(default=None, ge=0)
+    calories: Optional[float] = Field(default=None, ge=0, le=10000, allow_inf_nan=False)
+    protein: Optional[float] = Field(default=None, ge=0, le=1000, allow_inf_nan=False)
+    carbs: Optional[float] = Field(default=None, ge=0, le=1000, allow_inf_nan=False)
+    fats: Optional[float] = Field(default=None, ge=0, le=1000, allow_inf_nan=False)
+    fiber: Optional[float] = Field(default=None, ge=0, le=1000, allow_inf_nan=False)
     source: Optional[str] = None
     meal: Optional[str] = None
     food_item_id: Optional[int] = Field(default=None, gt=0)
@@ -390,6 +420,10 @@ async def create_log(log: LogCreate, db: Session = Depends(get_db)):
             raise HTTPException(status_code=422, detail="Enter all nutrition values, or review and confirm an AI estimate before saving.")
         calories, protein, carbs, fats, fiber = nutrient_values
         source = log.source or "user-edited"
+        if not any(value > 0 for value in nutrient_values):
+            raise HTTPException(status_code=422, detail="Nutrition values cannot all be zero. Review the estimate or enter the food values.")
+        if source == "AI-estimated" and calories <= 0:
+            raise HTTPException(status_code=422, detail="An AI food entry needs a positive calorie estimate before it can be saved.")
         if source not in {"database", "AI-estimated", "user-edited"}:
             raise HTTPException(status_code=422, detail="Nutrition source must be database, AI-estimated, or user-edited.")
         if log.food_item_id is not None:
@@ -511,13 +545,9 @@ def get_insights(days: int = Query(default=7, ge=7, le=90), db: Session = Depend
     daily = list(daily_by_date.values())
     logged_days = [day for day in daily if day["calories"] > 0]
     average_calories = round(sum(day["calories"] for day in logged_days) / len(logged_days)) if logged_days else 0
-    goal = (profile_data or {}).get("goal", "maintain")
-    if goal == "lose":
-        goal_label = "Logged days at or below target"
-        goal_days = sum(1 for day in logged_days if day["calories"] <= calorie_target)
-    elif goal == "gain":
-        goal_label = "Logged days at or above target"
-        goal_days = sum(1 for day in logged_days if day["calories"] >= calorie_target)
+    if not calorie_target:
+        goal_label = "Set up a target in Profile"
+        goal_days = 0
     else:
         goal_label = "Logged days within 10% of target"
         goal_days = sum(
@@ -535,7 +565,7 @@ def get_insights(days: int = Query(default=7, ge=7, le=90), db: Session = Depend
     return {
         "timezone": "Asia/Kolkata",
         "days": days,
-        "goal": goal,
+        "goal": (profile_data or {}).get("goal", "maintain"),
         "daily": daily,
         "weight_series": weight_series,
         "summary": {
@@ -713,9 +743,12 @@ async def parse_live(text: str):
     return await ai_engine.parse_food_live(text)
 
 @app.post("/ai/food-draft")
-async def food_draft(request: FoodDraftRequest):
+async def food_draft(request: FoodDraftRequest, db: Session = Depends(get_db)):
     if not request.text.strip():
         raise HTTPException(status_code=422, detail="Describe the food and amount first.")
+    catalog_draft = catalog_food_draft(request.text.strip(), db, FOOD_SEARCH_ALIASES)
+    if catalog_draft:
+        return catalog_draft
     try:
         return await ai_engine.create_food_draft(request.text.strip())
     except Exception as e:
