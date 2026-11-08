@@ -13,9 +13,10 @@ from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 from math import floor
 from .database import get_db, init_db
-from .models.models import Profile, HealthLog, FoodItem, FoodFavorite, Exercise, WorkoutSession, WorkoutSet, WaterLog, WeightLog
+from .models.models import Profile, HealthLog, FoodItem, FoodFavorite, Exercise, WorkoutSession, WorkoutSet, WaterLog, WeightLog, MealPlan
 from .ai_engine import ai_engine
 from .nutrition_service import catalog_food_draft
+from .meal_planner import adjust_planned_meal_portion, generate_weekly_plan, preserve_logged_meals, required_food_names, swap_planned_meal
 from .workout_service import workout_service
 from ..seed_db import seed_nutrition_db
 import uvicorn
@@ -139,6 +140,20 @@ class LogCreate(BaseModel):
 class FoodDraftRequest(BaseModel):
     text: str
 
+class MealPlanSwapRequest(BaseModel):
+    plan_date: date
+    meal_type: Literal["Breakfast", "Lunch", "Snack", "Dinner"]
+    recipe_id: str = Field(min_length=1, max_length=100)
+
+class MealPlanPortionRequest(BaseModel):
+    plan_date: date
+    meal_type: Literal["Breakfast", "Lunch", "Snack", "Dinner"]
+    portion_factor: float = Field(ge=0.5, le=2.5, allow_inf_nan=False)
+
+class MealPlanLogRequest(BaseModel):
+    plan_date: date
+    meal_type: Literal["Breakfast", "Lunch", "Snack", "Dinner"]
+
 class WaterCreate(BaseModel):
     amount_ml: int = Field(gt=0, le=5000)
 
@@ -162,6 +177,7 @@ class WorkoutLogCreate(BaseModel):
 class WorkoutPlanRequest(BaseModel):
     equipment: str = "Home"
     duration: int = Field(default=45, ge=10, le=180)
+    muscle_group: Optional[Literal["Chest", "Shoulders", "Biceps", "Forearms", "Core", "Quads", "Calves", "Triceps", "Back", "Glutes", "Hamstrings"]] = None
 
 @app.get("/")
 def read_root(): return {"status": "Online"}
@@ -324,6 +340,146 @@ def get_profile_weekly_plan(db: Session = Depends(get_db)):
         },
     }
 
+def _meal_plan_response(row: MealPlan):
+    if not row:
+        return None
+    local_today = datetime.now(ZoneInfo(row.plan_data.get("timezone") or "Asia/Kolkata")).date().isoformat()
+    return {
+        **row.plan_data,
+        "id": row.id,
+        "today": local_today,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+def _meal_planner_foods(db: Session):
+    return db.query(FoodItem).filter(FoodItem.name.in_(required_food_names())).all()
+
+
+@app.get("/meal-plans/current")
+def get_current_meal_plan(db: Session = Depends(get_db)):
+    profile = db.query(Profile).first()
+    if not profile:
+        return None
+    row = db.query(MealPlan).filter(MealPlan.profile_id == profile.id).first()
+    return _meal_plan_response(row)
+
+
+@app.post("/meal-plans/generate")
+def create_meal_plan(db: Session = Depends(get_db)):
+    profile = db.query(Profile).first()
+    if not profile:
+        raise HTTPException(status_code=400, detail="Save your Profile before creating a meal plan.")
+    local_zone = ZoneInfo(profile.routine_timezone or "Asia/Kolkata")
+    try:
+        row = db.query(MealPlan).filter(MealPlan.profile_id == profile.id).first()
+        plan_data = generate_weekly_plan(profile, _meal_planner_foods(db), datetime.now(local_zone).date())
+        if row:
+            plan_data = preserve_logged_meals(plan_data, row.plan_data)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    if row:
+        row.plan_data = plan_data
+    else:
+        row = MealPlan(profile_id=profile.id, plan_data=plan_data)
+        db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _meal_plan_response(row)
+
+
+@app.post("/meal-plans/{plan_id}/swap")
+def swap_meal_plan_entry(plan_id: int, request: MealPlanSwapRequest, db: Session = Depends(get_db)):
+    row = db.query(MealPlan).filter(MealPlan.id == plan_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Meal plan not found.")
+    try:
+        row.plan_data = swap_planned_meal(
+            row.plan_data,
+            request.plan_date.isoformat(),
+            request.meal_type,
+            request.recipe_id,
+            _meal_planner_foods(db),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    db.commit()
+    db.refresh(row)
+    return _meal_plan_response(row)
+
+
+@app.post("/meal-plans/{plan_id}/log")
+def log_planned_meal(plan_id: int, request: MealPlanLogRequest, db: Session = Depends(get_db)):
+    row = db.query(MealPlan).filter(MealPlan.id == plan_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Meal plan not found.")
+    profile = db.query(Profile).filter(Profile.id == row.profile_id).first()
+    local_today = datetime.now(ZoneInfo((profile.routine_timezone if profile else None) or "Asia/Kolkata")).date()
+    if request.plan_date != local_today:
+        raise HTTPException(status_code=422, detail="You can add a planned meal to your log on the day you eat it.")
+
+    plan_data = json.loads(json.dumps(row.plan_data))
+    day = next((item for item in plan_data.get("days", []) if item.get("date") == request.plan_date.isoformat()), None)
+    meal = next((item for item in (day or {}).get("meals", []) if item.get("meal_type") == request.meal_type), None)
+    if not meal:
+        raise HTTPException(status_code=404, detail="That planned meal was not found.")
+    meal_source = f"recipe-plan:{request.plan_date.isoformat()}:{request.meal_type.lower()}"
+    existing_log = db.query(HealthLog).filter(
+        HealthLog.category == "nutrition",
+        HealthLog.source == meal_source,
+    ).first()
+    if existing_log:
+        meal["logged"] = True
+        meal["log_id"] = existing_log.id
+        row.plan_data = plan_data
+        db.commit()
+        db.refresh(row)
+        return {"log_id": existing_log.id, "meal_plan": _meal_plan_response(row)}
+    if meal.get("logged"):
+        raise HTTPException(status_code=409, detail="This planned meal has already been added to your log.")
+
+    nutrition = meal["nutrition"]
+    entry = HealthLog(
+        category="nutrition",
+        note=f"{meal['name']} · planned portion {meal['portion_factor']}×",
+        calories=nutrition["calories"],
+        protein=nutrition["protein"],
+        carbs=nutrition["carbs"],
+        fats=nutrition["fats"],
+        fiber=nutrition["fiber"],
+        meal=meal["meal_type"],
+        source=meal_source,
+    )
+    db.add(entry)
+    db.flush()
+    meal["logged"] = True
+    meal["log_id"] = entry.id
+    row.plan_data = plan_data
+    db.commit()
+    db.refresh(row)
+    return {"log_id": entry.id, "meal_plan": _meal_plan_response(row)}
+
+
+@app.post("/meal-plans/{plan_id}/portion")
+def adjust_meal_portion(plan_id: int, request: MealPlanPortionRequest, db: Session = Depends(get_db)):
+    row = db.query(MealPlan).filter(MealPlan.id == plan_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Meal plan not found.")
+    try:
+        row.plan_data = adjust_planned_meal_portion(
+            row.plan_data,
+            request.plan_date.isoformat(),
+            request.meal_type,
+            request.portion_factor,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    db.commit()
+    db.refresh(row)
+    return _meal_plan_response(row)
+
+
 @app.get("/search-food")
 def search_food(
     q: str,
@@ -424,8 +580,8 @@ async def create_log(log: LogCreate, db: Session = Depends(get_db)):
             raise HTTPException(status_code=422, detail="Nutrition values cannot all be zero. Review the estimate or enter the food values.")
         if source == "AI-estimated" and calories <= 0:
             raise HTTPException(status_code=422, detail="An AI food entry needs a positive calorie estimate before it can be saved.")
-        if source not in {"database", "AI-estimated", "user-edited"}:
-            raise HTTPException(status_code=422, detail="Nutrition source must be database, AI-estimated, or user-edited.")
+        if source not in {"database", "AI-estimated", "user-edited", "recipe-plan"}:
+            raise HTTPException(status_code=422, detail="Nutrition source must be database, AI-estimated, user-edited, or recipe-plan.")
         if log.food_item_id is not None:
             if source != "database":
                 raise HTTPException(status_code=422, detail="Only catalog foods can be linked to a catalog item.")
@@ -660,18 +816,24 @@ def get_workout_templates(equipment: str = "Any", db: Session = Depends(get_db))
 
 @app.post("/workouts/plan")
 async def plan_workout(prefs: WorkoutPlanRequest, db: Session = Depends(get_db)):
-    if prefs.equipment not in {"Gym", "Home", "Dumbbells", "None"}:
-        raise HTTPException(status_code=422, detail="Choose Gym, Home, Dumbbells, or None equipment.")
+    if prefs.equipment not in {"Gym", "Home", "Dumbbells", "None", "Any"}:
+        raise HTTPException(status_code=422, detail="Choose Gym, Home, Dumbbells, None, or Any equipment.")
     profile = db.query(Profile).first()
     if not profile: raise HTTPException(status_code=404, detail="Profile not found")
     workout_service.seed_library(db)
     equipment_map = {
+        "Any": {"Gym", "Dumbbells", "Home", "None"},
         "Gym": {"Gym", "Dumbbells", "Home", "None"},
         "Home": {"Home", "None"},
-        "Dumbbells": {"Dumbbells", "None"},
-        "None": {"None"},
+        "Dumbbells": {"Dumbbells", "Home", "None"},
+        "None": {"None", "Home"},
     }
     exercise_library = db.query(Exercise).filter(Exercise.equipment.in_(equipment_map[prefs.equipment])).all()
+    if prefs.muscle_group:
+        exercise_library = [exercise for exercise in exercise_library if exercise.muscle_group == prefs.muscle_group]
+    if not exercise_library:
+        focus = f" for {prefs.muscle_group.lower()}" if prefs.muscle_group else ""
+        raise HTTPException(status_code=422, detail=f"No exercises are available{focus} with {prefs.equipment.lower()} equipment yet.")
     plan = await workout_service.generate_ai_workout(profile, prefs.model_dump(), exercise_library)
     if not plan: raise HTTPException(status_code=500, detail="AI failed to generate plan")
     return plan
@@ -731,7 +893,7 @@ def get_workout_sessions(
             "calories_burned": session.calories_burned,
             "note": session.note,
             "sets": [
-                {"exercise_name": name, "set_number": item.set_number, "reps": item.reps,
+                {"exercise_id": item.exercise_id, "exercise_name": name, "set_number": item.set_number, "reps": item.reps,
                  "weight": item.weight, "rpe": item.rpe}
                 for item, name in set_rows
             ],

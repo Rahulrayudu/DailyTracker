@@ -6,6 +6,7 @@ import {
   Droplets, Dumbbell, Flame, Home, Info, MessageCircle, Plus, Salad, Scale,
   Search, Sparkles, Sprout, User2, Wheat, X,
 } from 'lucide-react';
+import MuscleMap from './components/MuscleMap';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
@@ -19,6 +20,19 @@ function customDebounce(func, wait) {
     clearTimeout(timeout);
     timeout = setTimeout(later, wait);
   };
+}
+
+function parseWorkoutTimestamp(value) {
+  const timestamp = String(value || '');
+  return new Date(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(timestamp) ? timestamp : `${timestamp}Z`);
+}
+
+function istRangeStart(days) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const dateParts = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return Date.UTC(Number(dateParts.year), Number(dateParts.month) - 1, Number(dateParts.day) - (days - 1)) - (330 * 60 * 1000);
 }
 
 const MacroCard = ({ label, value, target, unit, color, icon }) => {
@@ -126,7 +140,39 @@ function suggestRoutineMealTimes(form) {
   };
 }
 
-function InsightsTab({ data, loading, days, onDaysChange }) {
+function WorkoutProgressChart({ title, points, color, unit, emptyMessage }) {
+  const chartWidth = 560;
+  const chartHeight = 210;
+  const left = 48;
+  const right = 18;
+  const top = 16;
+  const bottom = 38;
+  const plotWidth = chartWidth - left - right;
+  const plotHeight = chartHeight - top - bottom;
+  const maxValue = Math.max(1, ...points.map(point => point.value)) * 1.12;
+  const xFor = index => points.length <= 1 ? left + plotWidth / 2 : left + index * plotWidth / (points.length - 1);
+  const yFor = value => top + plotHeight - (value / maxValue) * plotHeight;
+  const coordinates = points.map((point, index) => `${xFor(index)},${yFor(point.value)}`).join(' ');
+  const labelEvery = Math.max(1, Math.ceil(points.length / 6));
+
+  return (
+    <article className="workout-progress-card">
+      <div className="workout-progress-card-heading"><h4>{title}</h4><span>{unit}</span></div>
+      {points.length ? <div className="workout-progress-chart-scroll"><svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} role="img" aria-label={`${title} progress over recent workout sessions`}>
+        {[0, 0.5, 1].map(tick => {
+          const value = maxValue * (1 - tick);
+          const y = top + plotHeight * tick;
+          return <g key={tick}><line x1={left} x2={chartWidth - right} y1={y} y2={y} stroke="rgba(255,255,255,.09)"/><text x={left - 8} y={y + 4} textAnchor="end" fill="#8490AA" fontSize="10">{Math.round(value * 10) / 10}</text></g>;
+        })}
+        {points.length > 1 && <polyline points={coordinates} fill="none" stroke={color} strokeWidth="3" strokeLinejoin="round" strokeLinecap="round"/>}
+        {points.map((point, index) => <g key={`${point.date}-${index}`}><circle cx={xFor(index)} cy={yFor(point.value)} r="5" fill={color} stroke="#08111D" strokeWidth="2"><title>{point.date}: {point.value} {unit}</title></circle>{(index % labelEvery === 0 || index === points.length - 1) && <text x={xFor(index)} y={chartHeight - 10} textAnchor="middle" fill="#8490AA" fontSize="9">{point.label}</text>}</g>)}
+      </svg></div> : <p className="workout-progress-empty">{emptyMessage}</p>}
+    </article>
+  );
+}
+
+function InsightsTab({ data, loading, days, onDaysChange, sessions = [] }) {
+  const [selectedExerciseId, setSelectedExerciseId] = useState('');
   const daily = data?.daily || [];
   const summary = data?.summary || {};
   const chartWidth = 760;
@@ -153,6 +199,32 @@ function InsightsTab({ data, loading, days, onDaysChange }) {
     return { x, y, item };
   });
   const caloriesLogged = daily.some(day => day.calories > 0);
+  const workoutCutoff = istRangeStart(days);
+  const inRangeSessions = sessions.filter(session => parseWorkoutTimestamp(session.date).getTime() >= workoutCutoff);
+  const exerciseOptionsById = new Map();
+  inRangeSessions.forEach(session => session.sets?.forEach(set => {
+    if (set.exercise_id != null && set.exercise_name) exerciseOptionsById.set(String(set.exercise_id), { id: String(set.exercise_id), name: set.exercise_name });
+  }));
+  const exerciseOptions = [...exerciseOptionsById.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const selectedExercise = exerciseOptions.find(exercise => exercise.id === selectedExerciseId) || exerciseOptions[0];
+  const exerciseProgress = selectedExercise ? inRangeSessions
+    .map(session => {
+      const sets = (session.sets || []).filter(set => String(set.exercise_id) === selectedExercise.id && Number(set.reps) > 0);
+      if (!sets.length) return null;
+      const weightedSets = sets.filter(set => set.weight != null && Number.isFinite(Number(set.weight)));
+      const bestWeight = weightedSets.length ? Math.max(...weightedSets.map(set => Number(set.weight))) : null;
+      const bestReps = Math.max(...sets.map(set => Number(set.reps)));
+      return {
+        date: session.date,
+        label: parseWorkoutTimestamp(session.date).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric', timeZone: 'Asia/Kolkata' }),
+        bestWeight,
+        bestReps,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => parseWorkoutTimestamp(a.date).getTime() - parseWorkoutTimestamp(b.date).getTime()) : [];
+  const loadProgressPoints = exerciseProgress.filter(point => point.bestWeight != null).map(point => ({ ...point, value: point.bestWeight }));
+  const repProgressPoints = exerciseProgress.map(point => ({ ...point, value: point.bestReps }));
 
   return (
     <div className="space-y-8">
@@ -214,6 +286,23 @@ function InsightsTab({ data, loading, days, onDaysChange }) {
               <div className="mt-4 rounded-xl bg-slate-900/40 p-4"><p className="text-[10px] uppercase tracking-wider text-slate-500">Average water on logged days</p><p className="mt-1 text-lg font-extrabold text-cyan-300">{summary.average_water_ml ? `${(summary.average_water_ml / 1000).toFixed(2)} L/day` : 'No water logs yet'}</p></div>
             </section>
           </div>
+
+          <section className="glass-card workout-progress-section p-5 md:p-7">
+            <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div><p className="text-xs font-bold uppercase tracking-[.18em] text-emerald-300">Strength tracking</p><h3 className="mt-1 text-lg font-extrabold">Exercise progress</h3><p className="mt-1 text-xs text-slate-500">Best logged load and reps for each session in the selected period.</p></div>
+              {exerciseOptions.length > 0 && <label className="text-xs font-bold text-slate-500">Exercise
+                <select value={selectedExercise?.id || ''} onChange={event => setSelectedExerciseId(event.target.value)} className="mt-1 block min-w-56 rounded-xl border border-slate-200 px-3 py-2 text-sm">
+                  {exerciseOptions.map(exercise => <option key={exercise.id} value={exercise.id}>{exercise.name}</option>)}
+                </select>
+              </label>}
+            </div>
+            {!exerciseOptions.length ? <p className="rounded-xl bg-slate-900/40 p-8 text-center text-sm text-slate-400">No completed exercise sets in this period yet. Finish a tracked workout to see your progress here.</p> : (
+              <div className="grid gap-4 lg:grid-cols-2">
+                <WorkoutProgressChart title="Best logged load" points={loadProgressPoints} color="#38BDF8" unit="kg" emptyMessage="No external load recorded for this exercise. Reps are charted alongside." />
+                <WorkoutProgressChart title="Best set reps" points={repProgressPoints} color="#34F5C5" unit="reps" emptyMessage="No completed reps recorded for this exercise in this period." />
+              </div>
+            )}
+          </section>
         </>
       )}
     </div>
@@ -228,7 +317,86 @@ const ProfileField = ({ label, children, hint }) => (
   </label>
 );
 
-function ProfileTab({ form, updateField, profile, weeklyPlan, planLoading, saving, onSave, onSuggestTimes }) {
+function MealPlannerPanel({ profile, plan, loading, saving, onGenerate, onSwap, onAdjustPortion, onLogMeal }) {
+  const [showGroceries, setShowGroceries] = useState(false);
+  const [swapSelections, setSwapSelections] = useState({});
+  const profileMealTimes = { Breakfast: profile.breakfast_time, Lunch: profile.lunch_time, Snack: profile.snack_time, Dinner: profile.dinner_time };
+  const staleSchedule = plan && Object.entries(profileMealTimes).some(([meal, value]) => plan.meal_times?.[meal] && plan.meal_times[meal] !== String(value || '').slice(0, 5));
+  const stalePlan = plan && (plan.diet_type !== profile.diet_type || Number(plan.daily_target_calories) !== Number(profile.calorie_target) || staleSchedule);
+
+  useEffect(() => { setSwapSelections({}); }, [plan?.updated_at, plan?.id]);
+
+  return (
+    <details className="glass-card profile-accordion meal-planner-accordion">
+      <summary className="profile-accordion-summary">
+        <div><p className="text-xs font-bold uppercase tracking-[.18em] text-green-500">Meal planner · 7 days</p><h3 className="mt-1 text-lg font-extrabold">Meals and grocery list</h3><p className="mt-1 text-xs text-slate-500">{plan ? `${plan.diet_type} · ${plan.daily_target_calories} kcal/day target` : 'Build a week from your goal, diet, and meal times.'}</p></div>
+        <ChevronDown size={19} className="profile-accordion-chevron" />
+      </summary>
+      <div className="profile-accordion-content space-y-5">
+        {loading ? (
+          <div className="animate-pulse rounded-xl bg-slate-700/30 p-8 text-center text-sm text-slate-400">Loading your saved meals…</div>
+        ) : !plan ? (
+          <div className="rounded-xl bg-slate-900/40 p-5">
+            <p className="text-sm text-slate-300">Create a seven-day meal plan using foods in your local catalog. You can swap meals and get one combined grocery list.</p>
+            <button type="button" onClick={onGenerate} disabled={saving} className="mt-4 rounded-xl bg-green-500 px-5 py-3 text-sm font-extrabold text-slate-950 disabled:opacity-60">{saving ? 'Building your meal plan…' : 'Create my meal plan'}</button>
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div><p className="text-sm font-bold">{plan.start_date} to {plan.end_date} · IST</p><p className="mt-1 text-xs text-slate-500">Meals use catalog nutrition and portion estimates. Adjust portions to match your appetite.</p></div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => setShowGroceries(value => !value)} className="rounded-xl border border-white/10 px-4 py-2 text-xs font-bold text-emerald-300">{showGroceries ? 'Hide grocery list' : `Grocery list · ${plan.grocery_list?.length || 0} items`}</button>
+                <button type="button" onClick={onGenerate} disabled={saving} className="rounded-xl border border-white/10 px-4 py-2 text-xs font-bold text-slate-300 disabled:opacity-60">{saving ? 'Updating…' : 'Regenerate week'}</button>
+              </div>
+            </div>
+
+            {stalePlan && <p className="rounded-xl border border-amber-400/20 bg-amber-400/10 p-3 text-xs text-amber-200">Your Profile goal or diet preference has changed since this plan was created. Regenerate it to apply the new settings.</p>}
+
+            {showGroceries && <section className="rounded-2xl border border-white/10 bg-slate-950/30 p-4 sm:p-5">
+              <div className="mb-4"><h4 className="font-extrabold">Consolidated grocery list</h4><p className="mt-1 text-xs text-slate-500">Amounts combine ingredients across all seven days.</p></div>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {[...new Set((plan.grocery_list || []).map(item => item.category))].map(category => (
+                  <div key={category}><p className="mb-2 text-[10px] font-extrabold uppercase tracking-wider text-slate-500">{category}</p><ul className="space-y-2">{plan.grocery_list.filter(item => item.category === category).map(item => <li key={`${category}-${item.name}-${item.unit}`} className="flex items-center justify-between gap-3 rounded-lg bg-white/5 px-3 py-2 text-xs"><span>{item.name}</span><b className="shrink-0 text-emerald-300">{item.amount} {item.unit}</b></li>)}</ul></div>
+                ))}
+              </div>
+            </section>}
+
+            <div className="space-y-3">
+              {plan.days?.map(day => <details key={day.date} open={day.date === plan.today} className="meal-plan-day rounded-2xl border border-white/10 bg-slate-950/25">
+                <summary className="flex flex-wrap items-center justify-between gap-3 p-4">
+                  <div><p className="font-extrabold">{day.day} <span className="ml-2 text-xs font-medium text-slate-500">{new Date(`${day.date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span></p><p className="mt-1 text-xs text-slate-500">Target {day.target_calories} kcal · Planned {Math.round(day.totals.calories)} kcal · P {Math.round(day.totals.protein)} g</p></div>
+                  <ChevronDown size={17} className="profile-accordion-chevron" />
+                </summary>
+                <div className="space-y-3 border-t border-white/5 p-3 sm:p-4">
+                  {day.meals.map(meal => {
+                    const key = `${day.date}-${meal.meal_type}`;
+                    const selectedRecipe = swapSelections[key] || meal.recipe_id;
+                    return <article key={meal.meal_type} className="rounded-xl border border-white/5 bg-white/[.025] p-3 sm:p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0"><p className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-300">{meal.meal_type} · {meal.time}</p><h4 className="mt-1 font-bold">{meal.name}</h4><p className="mt-1 text-xs text-slate-500">{Math.round(meal.nutrition.calories)} kcal · P {meal.nutrition.protein} g · C {meal.nutrition.carbs} g · F {meal.nutrition.fats} g · Fiber {meal.nutrition.fiber} g</p></div>
+                        <div className="flex flex-wrap items-center gap-2">{!meal.logged && <div className="flex items-center gap-1 rounded-lg border border-white/10 px-1 py-1"><button type="button" aria-label={`Reduce ${meal.meal_type.toLowerCase()} portion`} onClick={() => onAdjustPortion(day.date, meal.meal_type, Math.max(0.5, Number((meal.portion_factor - 0.1).toFixed(2))))} disabled={saving || meal.portion_factor <= 0.5} className="h-8 w-8 rounded-md text-slate-300 disabled:opacity-40">−</button><span className="min-w-12 text-center text-[10px] font-bold text-slate-400">{meal.portion_factor.toFixed(1)}×</span><button type="button" aria-label={`Increase ${meal.meal_type.toLowerCase()} portion`} onClick={() => onAdjustPortion(day.date, meal.meal_type, Math.min(2.5, Number((meal.portion_factor + 0.1).toFixed(2))))} disabled={saving || meal.portion_factor >= 2.5} className="h-8 w-8 rounded-md text-slate-300 disabled:opacity-40">+</button></div>}{meal.logged ? <span className="rounded-full bg-emerald-400/10 px-3 py-1 text-[10px] font-extrabold text-emerald-300">Added to log</span> : day.date === plan.today ? <button type="button" onClick={() => onLogMeal(day.date, meal.meal_type)} disabled={saving} className="rounded-lg bg-emerald-500/15 px-3 py-2 text-xs font-bold text-emerald-300 disabled:opacity-50">Add to food log</button> : null}</div>
+                      </div>
+                      <details className="mt-3">
+                        <summary className="text-xs font-semibold text-slate-400">Ingredients and portions</summary>
+                        <ul className="mt-2 grid gap-1 text-xs text-slate-500 sm:grid-cols-2">{meal.ingredients.map(item => <li key={`${item.name}-${item.unit}`}>{item.amount} {item.unit} {item.name}</li>)}</ul>
+                      </details>
+                      {!meal.logged && (meal.swap_options?.length || 0) > 1 && <div className="mt-3 flex gap-2">
+                        <select aria-label={`Choose a ${meal.meal_type.toLowerCase()} replacement`} value={selectedRecipe} onChange={event => setSwapSelections(previous => ({ ...previous, [key]: event.target.value }))} className="min-w-0 flex-1 rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-xs text-slate-200">{meal.swap_options.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}</select>
+                        <button type="button" onClick={() => onSwap(day.date, meal.meal_type, selectedRecipe)} disabled={saving || selectedRecipe === meal.recipe_id} className="rounded-lg border border-white/10 px-3 py-2 text-xs font-bold text-slate-300 disabled:opacity-40">Swap</button>
+                      </div>}
+                    </article>;
+                  })}
+                </div>
+              </details>)}
+            </div>
+          </>
+        )}
+      </div>
+    </details>
+  );
+}
+
+function ProfileTab({ form, updateField, profile, weeklyPlan, planLoading, saving, onSave, onSuggestTimes, mealPlan, mealPlanLoading, mealPlanSaving, onGenerateMealPlan, onSwapMeal, onAdjustMealPortion, onLogPlannedMeal }) {
   const inputClass = 'w-full rounded-xl border border-slate-200 px-3 py-3 text-sm';
   const numberField = (name, label, props = {}) => (
     <ProfileField key={name} label={label}>
@@ -370,6 +538,16 @@ function ProfileTab({ form, updateField, profile, weeklyPlan, planLoading, savin
             ) : <p className="rounded-xl bg-slate-900/40 p-6 text-sm text-slate-400">Save your profile to generate a personal seven-day routine and calorie schedule.</p>}
             </div>
           </details>
+          <MealPlannerPanel
+            profile={profile}
+            plan={mealPlan}
+            loading={mealPlanLoading}
+            saving={mealPlanSaving}
+            onGenerate={onGenerateMealPlan}
+            onSwap={onSwapMeal}
+            onAdjustPortion={onAdjustMealPortion}
+            onLogMeal={onLogPlannedMeal}
+          />
         </>
       ) : <div className="glass-card p-5 text-sm text-slate-400">Save your measurements and goal to calculate your starting targets and weekly plan.</div>}
     </div>
@@ -401,6 +579,9 @@ export default function App() {
   const [profileSaving, setProfileSaving] = useState(false);
   const [weeklyPlan, setWeeklyPlan] = useState(null);
   const [weeklyPlanLoading, setWeeklyPlanLoading] = useState(false);
+  const [mealPlan, setMealPlan] = useState(null);
+  const [mealPlanLoading, setMealPlanLoading] = useState(false);
+  const [mealPlanSaving, setMealPlanSaving] = useState(false);
   const [insightDays, setInsightDays] = useState(7);
   const [insightData, setInsightData] = useState(null);
   const [insightsLoading, setInsightsLoading] = useState(false);
@@ -414,13 +595,18 @@ export default function App() {
   const chatAbortRef = useRef(null);
 
   const [workoutPlan, setWorkoutPlan] = useState(null);
+  const [newPlanExerciseId, setNewPlanExerciseId] = useState('');
   const [workoutLoading, setWorkoutLoading] = useState(false);
   const [workoutPrefs, setWorkoutPrefs] = useState({ equipment: 'Gym', duration: '45' });
-  const [trainView, setTrainView] = useState('planner');
+  const [workoutFocus, setWorkoutFocus] = useState('');
+  const [trainView, setTrainView] = useState('map');
   const [workoutTemplates, setWorkoutTemplates] = useState([]);
   const [exerciseLibrary, setExerciseLibrary] = useState([]);
+  const [exerciseLoading, setExerciseLoading] = useState(false);
   const [exerciseQuery, setExerciseQuery] = useState('');
   const [exerciseGroup, setExerciseGroup] = useState('Any');
+  const [exerciseEquipment, setExerciseEquipment] = useState('Any');
+  const [selectedMuscle, setSelectedMuscle] = useState('Chest');
   const [workoutSessions, setWorkoutSessions] = useState([]);
   const [activeWorkout, setActiveWorkout] = useState(null);
   const [workoutElapsed, setWorkoutElapsed] = useState(0);
@@ -464,6 +650,60 @@ export default function App() {
       setSummary(sumRes.data);
       setTracking(trackingRes.data);
     } catch (e) { console.error("Loading error", e); }
+  };
+
+  const generateMealPlan = async () => {
+    setMealPlanSaving(true);
+    try {
+      const response = await axios.post(`${API_BASE}/meal-plans/generate`, {});
+      setMealPlan(response.data);
+      notify('Your seven-day meal plan and grocery list are ready.');
+    } catch (e) {
+      notify(e.response?.data?.detail || 'Could not build a meal plan. Check your Profile and food catalog.', 'error');
+    } finally { setMealPlanSaving(false); }
+  };
+
+  const swapMealPlan = async (planDate, mealType, recipeId) => {
+    if (!mealPlan?.id) return;
+    setMealPlanSaving(true);
+    try {
+      const response = await axios.post(`${API_BASE}/meal-plans/${mealPlan.id}/swap`, {
+        plan_date: planDate, meal_type: mealType, recipe_id: recipeId,
+      });
+      setMealPlan(response.data);
+      notify(`${mealType} meal updated and grocery quantities recalculated.`);
+    } catch (e) {
+      notify(e.response?.data?.detail || 'Could not swap this meal.', 'error');
+    } finally { setMealPlanSaving(false); }
+  };
+
+  const adjustMealPlanPortion = async (planDate, mealType, portionFactor) => {
+    if (!mealPlan?.id) return;
+    setMealPlanSaving(true);
+    try {
+      const response = await axios.post(`${API_BASE}/meal-plans/${mealPlan.id}/portion`, {
+        plan_date: planDate, meal_type: mealType, portion_factor: portionFactor,
+      });
+      setMealPlan(response.data);
+      notify(`${mealType} portion updated; nutrition and groceries recalculated.`);
+    } catch (e) {
+      notify(e.response?.data?.detail || 'Could not update this meal portion.', 'error');
+    } finally { setMealPlanSaving(false); }
+  };
+
+  const logPlannedMeal = async (planDate, mealType) => {
+    if (!mealPlan?.id) return;
+    setMealPlanSaving(true);
+    try {
+      const response = await axios.post(`${API_BASE}/meal-plans/${mealPlan.id}/log`, {
+        plan_date: planDate, meal_type: mealType,
+      });
+      setMealPlan(response.data.meal_plan);
+      await loadAllData();
+      notify(`${mealType} added to your food log.`);
+    } catch (e) {
+      notify(e.response?.data?.detail || 'Could not add this planned meal to your log.', 'error');
+    } finally { setMealPlanSaving(false); }
   };
 
   const addWater = async (amount = Number(waterAmount)) => {
@@ -751,14 +991,72 @@ export default function App() {
   const generateWorkout = async () => {
     setWorkoutLoading(true);
     setWorkoutPlan(null);
+    setNewPlanExerciseId('');
     try {
-      const res = await axios.post(`${API_BASE}/workouts/plan`, workoutPrefs);
+      const res = await axios.post(`${API_BASE}/workouts/plan`, { ...workoutPrefs, muscle_group: workoutFocus || null });
       setWorkoutPlan(res.data);
     } catch (e) {
-      notify("Failed to generate workout. Try again!", 'error');
+      notify(e.response?.data?.detail || 'Failed to generate workout. Try again!', 'error');
     } finally {
       setWorkoutLoading(false);
     }
+  };
+
+  const buildFocusedWorkout = muscle => {
+    const equipmentMap = { Any: 'Any', Bodyweight: 'None', Dumbbells: 'Dumbbells', Gym: 'Gym' };
+    setWorkoutPrefs(current => ({ ...current, equipment: equipmentMap[exerciseEquipment] || 'Any' }));
+    setWorkoutFocus(muscle === 'All muscles' ? '' : muscle);
+    setWorkoutPlan(null);
+    setTrainView('planner');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    notify(muscle === 'All muscles' ? 'Full-body workout is ready to configure.' : `${muscle} focus is ready for your AI workout.`, 'info');
+  };
+
+  const replacePlanExercise = (index, exerciseId) => {
+    const replacement = exerciseLibrary.find(exercise => String(exercise.id) === String(exerciseId));
+    if (!replacement || !workoutPlan) return;
+    setWorkoutPlan(current => current ? {
+      ...current,
+      exercises: current.exercises.map((exercise, exerciseIndex) => exerciseIndex === index
+        ? { ...exercise, exercise_id: replacement.id, name: replacement.name, instructions: replacement.instructions }
+        : exercise)
+    } : current);
+    notify(`Replaced with ${replacement.name}.`, 'success');
+  };
+
+  const removePlanExercise = index => {
+    if (!workoutPlan) return;
+    if (workoutPlan.exercises.length <= 1) {
+      notify('Keep at least one exercise in the workout.', 'info');
+      return;
+    }
+    const removedName = workoutPlan.exercises[index]?.name;
+    setWorkoutPlan(current => current ? { ...current, exercises: current.exercises.filter((_, exerciseIndex) => exerciseIndex !== index) } : current);
+    notify(`${removedName || 'Exercise'} removed from the plan.`, 'info');
+  };
+
+  const addPlanExercise = () => {
+    if (!workoutPlan || !newPlanExerciseId) return;
+    const exercise = planExerciseOptions.find(item => String(item.id) === String(newPlanExerciseId));
+    if (!exercise) return;
+    if (workoutPlan.exercises.some(item => item.exercise_id === exercise.id)) {
+      notify('That exercise is already in the plan.', 'info');
+      return;
+    }
+    setWorkoutPlan(current => current ? {
+      ...current,
+      exercises: [...current.exercises, {
+        exercise_id: exercise.id,
+        name: exercise.name,
+        sets: 3,
+        reps: '8-12',
+        rest: '60-90 sec',
+        rpe: 6,
+        instructions: exercise.instructions,
+      }]
+    } : current);
+    setNewPlanExerciseId('');
+    notify(`${exercise.name} added to the plan.`);
   };
 
   const saveProfile = async () => {
@@ -809,11 +1107,12 @@ export default function App() {
   };
 
   const loadWorkoutData = async () => {
+    setExerciseLoading(true);
     try {
       const [templatesRes, exercisesRes, sessionsRes] = await Promise.all([
         axios.get(`${API_BASE}/workouts/templates?equipment=${encodeURIComponent(workoutPrefs.equipment)}`),
         axios.get(`${API_BASE}/exercises`),
-        axios.get(`${API_BASE}/workouts/sessions?limit=10`)
+        axios.get(`${API_BASE}/workouts/sessions?limit=100`)
       ]);
       setWorkoutTemplates(templatesRes.data);
       setExerciseLibrary(exercisesRes.data);
@@ -821,6 +1120,8 @@ export default function App() {
     } catch (e) {
       console.error('Workout data loading error:', e);
       notify('Could not load workout library.', 'error');
+    } finally {
+      setExerciseLoading(false);
     }
   };
 
@@ -845,6 +1146,22 @@ export default function App() {
   }, [activeTab, profile?.id, profile?.calorie_target]);
 
   useEffect(() => {
+    if (activeTab !== 'profile' || !profile) return;
+    let cancelled = false;
+    setMealPlanLoading(true);
+    axios.get(`${API_BASE}/meal-plans/current`)
+      .then(response => { if (!cancelled) setMealPlan(response.data); })
+      .catch(error => {
+        if (!cancelled) {
+          setMealPlan(null);
+          console.error('Saved meal plan loading error:', error);
+        }
+      })
+      .finally(() => { if (!cancelled) setMealPlanLoading(false); });
+    return () => { cancelled = true; };
+  }, [activeTab, profile?.id]);
+
+  useEffect(() => {
     if (activeTab !== 'insights') return;
     let cancelled = false;
     setInsightsLoading(true);
@@ -859,6 +1176,15 @@ export default function App() {
       .finally(() => { if (!cancelled) setInsightsLoading(false); });
     return () => { cancelled = true; };
   }, [activeTab, insightDays, profile?.id, profile?.calorie_target]);
+
+  useEffect(() => {
+    if (activeTab !== 'insights') return;
+    let cancelled = false;
+    axios.get(`${API_BASE}/workouts/sessions?limit=100`)
+      .then(response => { if (!cancelled) setWorkoutSessions(response.data); })
+      .catch(error => { if (!cancelled) console.error('Exercise progress loading error:', error); });
+    return () => { cancelled = true; };
+  }, [activeTab]);
 
   const activeWorkoutStartedAt = activeWorkout?.startedAt;
   useEffect(() => {
@@ -877,11 +1203,18 @@ export default function App() {
     setActiveWorkout({
       workoutName: plan.workout_name,
       startedAt: Date.now(),
-      exercises: plan.exercises.map(exercise => ({
-        ...exercise,
-        completed: false,
-        actualSets: Array.from({ length: Math.max(1, Math.min(Number(exercise.sets) || 1, 8)) }, () => ({ reps: '', weight: '', rpe: '' }))
-      }))
+      exercises: plan.exercises.map(exercise => {
+        const previousSession = workoutSessions.find(session => session.sets?.some(set => Number(set.exercise_id) === Number(exercise.exercise_id)));
+        const previousSets = previousSession?.sets
+          .filter(set => Number(set.exercise_id) === Number(exercise.exercise_id))
+          .sort((left, right) => left.set_number - right.set_number) || [];
+        return {
+          ...exercise,
+          previousWorkout: previousSession ? { date: previousSession.date, sets: previousSets } : null,
+          completed: false,
+          actualSets: Array.from({ length: Math.max(1, Math.min(Number(exercise.sets) || 1, 8)) }, () => ({ reps: '', weight: '', rpe: '' }))
+        };
+      })
     });
     setWorkoutElapsed(0);
     notify('Workout started. Log the reps and weight you complete.', 'info');
@@ -962,6 +1295,18 @@ export default function App() {
     const matchesQuery = !exerciseQuery || `${exercise.name} ${exercise.instructions} ${exercise.muscle_group}`.toLowerCase().includes(exerciseQuery.toLowerCase());
     return matchesQuery && (exerciseGroup === 'Any' || exercise.muscle_group === exerciseGroup);
   });
+  const planEquipment = workoutPlan?.equipment || workoutPrefs.equipment;
+  const planEquipmentOptions = {
+    Any: ['Gym', 'Dumbbells', 'Home', 'None'],
+    Gym: ['Gym', 'Dumbbells', 'Home', 'None'],
+    Home: ['Home', 'None'],
+    Dumbbells: ['Dumbbells', 'Home', 'None'],
+    None: ['None', 'Home'],
+  }[planEquipment] || ['Gym', 'Dumbbells', 'Home', 'None'];
+  const planFocusGroup = workoutPlan?.muscle_group || workoutFocus;
+  const planExerciseOptions = exerciseLibrary.filter(exercise =>
+    planEquipmentOptions.includes(exercise.equipment) && (!planFocusGroup || exercise.muscle_group === planFocusGroup)
+  );
 
   useEffect(() => { loadFoodCollections(); }, []);
 
@@ -1333,6 +1678,13 @@ export default function App() {
                   saving={profileSaving}
                   onSave={saveProfile}
                   onSuggestTimes={suggestProfileMealTimes}
+                  mealPlan={mealPlan}
+                  mealPlanLoading={mealPlanLoading}
+                  mealPlanSaving={mealPlanSaving}
+                  onGenerateMealPlan={generateMealPlan}
+                  onSwapMeal={swapMealPlan}
+                  onAdjustMealPortion={adjustMealPlanPortion}
+                  onLogPlannedMeal={logPlannedMeal}
                 />
               )}
 
@@ -1363,9 +1715,9 @@ export default function App() {
               )}
 
               {activeTab === 'train' && (
-                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="max-w-4xl mx-auto space-y-10">
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="max-w-6xl mx-auto space-y-8">
                   <div className="flex flex-wrap gap-2 rounded-2xl bg-white p-2 border border-slate-100 shadow-sm" role="tablist" aria-label="Workout sections">
-                    {[["planner", "Planner"], ["library", "Exercise library"], ["history", "History"]].map(([view, label]) => (
+                    {[["map", "Muscle map"], ["planner", "AI planner"], ["library", "Exercise library"], ["history", "History"]].map(([view, label]) => (
                       <button key={view} role="tab" aria-selected={trainView === view} onClick={() => setTrainView(view)}
                         className={`rounded-xl px-3 sm:px-5 py-3 text-sm font-bold transition-colors ${trainView === view ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>
                         {label}
@@ -1379,16 +1731,31 @@ export default function App() {
                     </button>
                   )}
 
+                  {trainView === 'map' && (
+                    <MuscleMap
+                      selectedMuscle={selectedMuscle}
+                      onSelectMuscle={setSelectedMuscle}
+                      equipment={exerciseEquipment}
+                      onEquipmentChange={setExerciseEquipment}
+                      onBuildFocusedWorkout={buildFocusedWorkout}
+                      query={exerciseQuery}
+                      onQueryChange={setExerciseQuery}
+                      exercises={exerciseLibrary}
+                      loading={exerciseLoading}
+                    />
+                  )}
+
                   {trainView === 'planner' && <>
                     <div className="bg-white p-5 sm:p-8 lg:p-12 rounded-[2.5rem] shadow-sm border border-slate-100 text-center space-y-6 sm:space-y-8">
                       <div>
+                        {workoutFocus && <div className="mx-auto mb-4 inline-flex items-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1.5 text-xs font-bold text-emerald-300"><span>Focused on {workoutFocus}</span><button type="button" aria-label="Clear muscle focus" onClick={() => setWorkoutFocus('')} className="workout-focus-clear grid h-5 w-5 place-items-center rounded-full text-emerald-200 hover:bg-white/10"><X size={13} /></button></div>}
                         <h2 className="text-4xl font-extrabold text-slate-900 tracking-tight">Workout Planner</h2>
-                        <p className="text-slate-500 max-w-lg mx-auto mt-3">Choose a ready-made routine or ask the local AI to create a plan from the exercise library.</p>
+                        <p className="text-slate-500 max-w-lg mx-auto mt-3">{workoutFocus ? `Create a ${workoutFocus.toLowerCase()} session with exercises matched to your available equipment.` : 'Choose a ready-made routine or ask the local AI to create a plan from the exercise library.'}</p>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-2xl mx-auto text-left">
                         <label className="space-y-2 block text-xs font-bold text-slate-400 uppercase tracking-wider">Equipment
                           <select value={workoutPrefs.equipment} onChange={e => setWorkoutPrefs({...workoutPrefs, equipment: e.target.value})} className="mt-2 w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 outline-none text-sm text-slate-800 normal-case">
-                            <option value="Gym">Gym</option><option value="Home">Home</option><option value="Dumbbells">Dumbbells only</option><option value="None">Bodyweight</option>
+                            <option value="Any">Any equipment</option><option value="Gym">Gym</option><option value="Home">Home</option><option value="Dumbbells">Dumbbells only</option><option value="None">Bodyweight</option>
                           </select>
                         </label>
                         <label className="space-y-2 block text-xs font-bold text-slate-400 uppercase tracking-wider">Duration (minutes)
@@ -1408,7 +1775,7 @@ export default function App() {
                           <article key={template.workout_name} className="rounded-3xl bg-white p-6 border border-slate-100 shadow-sm flex flex-col gap-4">
                             <div><span className="text-[10px] uppercase tracking-widest font-bold text-emerald-700">{template.equipment} · {template.duration} min</span><h4 className="mt-2 font-extrabold text-slate-900">{template.workout_name}</h4><p className="mt-2 text-xs leading-relaxed text-slate-500">{template.reasoning}</p></div>
                             <p className="text-xs text-slate-500">{template.exercises.length} exercises · 3 sets each</p>
-                            <button onClick={() => { setWorkoutPlan(template); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="mt-auto rounded-xl bg-emerald-50 text-emerald-800 px-4 py-3 text-sm font-bold hover:bg-emerald-100">Preview routine</button>
+                            <button onClick={() => { setWorkoutFocus(''); setWorkoutPlan(template); setNewPlanExerciseId(''); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="mt-auto rounded-xl bg-emerald-50 text-emerald-800 px-4 py-3 text-sm font-bold hover:bg-emerald-100">Preview routine</button>
                           </article>
                         ))}
                         {!workoutTemplates.length && <p className="text-sm text-slate-400">Loading templates…</p>}
@@ -1419,7 +1786,7 @@ export default function App() {
                       <section className="rounded-[2rem] bg-white p-7 sm:p-10 border border-slate-100 shadow-sm space-y-6">
                         <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 pb-5">
                           <div><h3 className="text-2xl font-extrabold text-slate-900">{workoutPlan.workout_name}</h3><p className="mt-2 text-sm text-slate-500">{workoutPlan.reasoning}</p></div>
-                          <span className="rounded-full bg-emerald-50 text-emerald-700 px-3 py-1.5 text-xs font-bold">{workoutPlan.source === 'template' ? 'Template' : 'AI plan'}</span>
+                          <div className="flex flex-wrap items-center gap-2">{workoutPlan.muscle_group && <span className="rounded-full border border-emerald-300/15 bg-emerald-300/10 px-3 py-1.5 text-xs font-bold text-emerald-300">{workoutPlan.muscle_group} focus</span>}<span className="rounded-full bg-emerald-50 text-emerald-700 px-3 py-1.5 text-xs font-bold">{workoutPlan.source === 'template' ? 'Template' : 'AI plan'}</span></div>
                         </div>
                         {workoutPlan.warm_up && <p className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-900"><b>Warm-up:</b> {workoutPlan.warm_up}</p>}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1427,9 +1794,23 @@ export default function App() {
                             <article key={`${ex.exercise_id}-${i}`} className="rounded-2xl bg-slate-50 p-5 border border-slate-100">
                               <div className="flex justify-between gap-3"><div><p className="font-bold text-slate-800">{ex.name}</p><p className="text-xs text-slate-500 mt-1">{ex.sets} sets · {ex.reps} reps · rest {ex.rest}</p></div><span className="text-xs rounded-full bg-white px-3 py-1 h-fit font-bold text-slate-600">RPE {ex.rpe}</span></div>
                               {ex.instructions && <p className="mt-3 text-xs leading-relaxed text-slate-500">{ex.instructions}</p>}
+                              {!activeWorkout && <div className="workout-plan-exercise-actions">
+                                <label><span>Replace with</span><select value="" onChange={event => replacePlanExercise(i, event.target.value)} aria-label={`Replace ${ex.name} with another exercise`}>
+                                  <option value="">Choose exercise</option>
+                                  {planExerciseOptions.filter(candidate => candidate.id !== ex.exercise_id && !workoutPlan.exercises.some((planned, plannedIndex) => plannedIndex !== i && planned.exercise_id === candidate.id)).map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.name} · {candidate.equipment === 'None' ? 'Bodyweight' : candidate.equipment}</option>)}
+                                </select></label>
+                                <button type="button" onClick={() => removePlanExercise(i)} disabled={workoutPlan.exercises.length <= 1} aria-label={`Remove ${ex.name}`} title={workoutPlan.exercises.length <= 1 ? 'Keep at least one exercise' : `Remove ${ex.name}`}><X size={15} /><span>Remove</span></button>
+                              </div>}
                             </article>
                           ))}
                         </div>
+                        {!activeWorkout && <div className="workout-plan-add-box">
+                          <div><h4>Customize this workout</h4><p>Add, replace, or remove movements before starting.</p></div>
+                          <div className="workout-plan-add-row"><select value={newPlanExerciseId} onChange={event => setNewPlanExerciseId(event.target.value)} aria-label="Choose an exercise to add">
+                            <option value="">Choose an exercise to add</option>
+                            {planExerciseOptions.filter(candidate => !workoutPlan.exercises.some(planned => planned.exercise_id === candidate.id)).map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.name} · {candidate.equipment === 'None' ? 'Bodyweight' : candidate.equipment}</option>)}
+                          </select><button type="button" onClick={addPlanExercise} disabled={!newPlanExerciseId}><Plus size={16} />Add exercise</button></div>
+                        </div>}
                         {!activeWorkout ? <button onClick={() => startWorkout(workoutPlan)} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-extrabold shadow-lg hover:bg-slate-800">Start workout</button> : <p className="text-center text-sm font-bold text-emerald-700">A workout session is already in progress.</p>}
                       </section>
                     )}
@@ -1445,15 +1826,21 @@ export default function App() {
                           {activeWorkout.exercises.map((exercise, exerciseIndex) => (
                             <article key={`${exercise.exercise_id}-${exerciseIndex}`} className={`rounded-2xl border p-4 ${exercise.completed ? 'border-emerald-200 bg-emerald-50/60' : 'border-slate-100 bg-slate-50'}`}>
                               <label className="flex items-center gap-3 font-bold text-slate-800"><input type="checkbox" checked={exercise.completed} onChange={e => updateWorkoutExercise(exerciseIndex, { completed: e.target.checked })} className="h-5 w-5 accent-emerald-600"/>{exercise.name}<span className="ml-auto text-xs font-medium text-slate-500">Plan: {exercise.sets} × {exercise.reps}</span></label>
+                              {exercise.previousWorkout && <p className="mt-2 text-xs text-slate-400">Previous session · {new Date(exercise.previousWorkout.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</p>}
                               <div className="mt-4 space-y-2">
-                                {exercise.actualSets.map((set, setIndex) => (
-                                  <div key={setIndex} className="workout-set-row grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] items-center gap-2">
-                                    <span className="text-xs font-bold text-slate-400">Set {setIndex + 1}</span>
-                                    <input type="number" min="0" max="1000" step="1" value={set.reps} onChange={e => updateWorkoutSet(exerciseIndex, setIndex, 'reps', e.target.value)} placeholder="Reps" aria-label={`${exercise.name} set ${setIndex + 1} reps`} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"/>
-                                    <input type="number" min="0" max="2000" step="0.5" value={set.weight} onChange={e => updateWorkoutSet(exerciseIndex, setIndex, 'weight', e.target.value)} placeholder="Load kg" aria-label={`${exercise.name} set ${setIndex + 1} load in kilograms`} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"/>
-                                    <input type="number" min="1" max="10" step="1" value={set.rpe} onChange={e => updateWorkoutSet(exerciseIndex, setIndex, 'rpe', e.target.value)} placeholder="RPE" aria-label={`${exercise.name} set ${setIndex + 1} effort`} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"/>
-                                  </div>
-                                ))}
+                                {exercise.actualSets.map((set, setIndex) => {
+                                  const previousSet = exercise.previousWorkout?.sets?.[setIndex];
+                                  const previousLoad = previousSet?.weight != null ? `${previousSet.weight} kg` : 'Bodyweight';
+                                  return <div key={setIndex} className="workout-set-entry">
+                                    <div className="workout-set-row grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] items-center gap-2">
+                                      <span className="text-xs font-bold text-slate-400">Set {setIndex + 1}</span>
+                                      <input type="number" min="0" max="1000" step="1" value={set.reps} onChange={e => updateWorkoutSet(exerciseIndex, setIndex, 'reps', e.target.value)} placeholder={previousSet ? `Last ${previousSet.reps}` : 'Reps'} aria-label={`${exercise.name} set ${setIndex + 1} reps`} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"/>
+                                      <input type="number" min="0" max="2000" step="0.5" value={set.weight} onChange={e => updateWorkoutSet(exerciseIndex, setIndex, 'weight', e.target.value)} placeholder={previousSet ? (previousSet.weight != null ? `Last ${previousSet.weight} kg` : 'Bodyweight') : 'Load kg'} aria-label={`${exercise.name} set ${setIndex + 1} load in kilograms`} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"/>
+                                      <input type="number" min="1" max="10" step="1" value={set.rpe} onChange={e => updateWorkoutSet(exerciseIndex, setIndex, 'rpe', e.target.value)} placeholder={previousSet?.rpe ? `Last ${previousSet.rpe}` : 'RPE'} aria-label={`${exercise.name} set ${setIndex + 1} effort`} className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"/>
+                                    </div>
+                                    {previousSet && <p className="workout-previous-set">Previous: {previousSet.reps} reps · {previousLoad}{previousSet.rpe ? ` · RPE ${previousSet.rpe}` : ''}</p>}
+                                  </div>;
+                                })}
                               </div>
                             </article>
                           ))}
@@ -1481,14 +1868,14 @@ export default function App() {
                     <section className="space-y-6">
                       <div><h2 className="text-3xl font-extrabold text-slate-900">Workout history</h2><p className="text-slate-500 mt-2">Your latest saved sessions and logged sets.</p></div>
                       {!workoutSessions.length && <div className="rounded-3xl bg-white p-12 text-center text-slate-400 border border-slate-100">Completed sessions will appear here.</div>}
-                      <div className="space-y-4">{workoutSessions.map(session => <article key={session.id} className="rounded-2xl bg-white p-6 border border-slate-100 shadow-sm"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-extrabold text-slate-900">{session.workout_type}</h3><p className="mt-1 text-xs text-slate-400">{new Date(session.date).toLocaleString()} · {session.duration_mins} min</p></div><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">{session.sets.length} sets logged</span></div>{session.note && <p className="mt-3 text-sm text-slate-500">{session.note}</p>}{session.sets.length > 0 && <div className="mt-4 flex flex-wrap gap-2">{session.sets.map((set,index) => <span key={`${session.id}-${index}`} className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">{set.exercise_name} · {set.reps} reps{set.weight != null ? ` · ${set.weight} kg` : ''}</span>)}</div>}</article>)}</div>
+                      <div className="space-y-4">{workoutSessions.slice(0, 10).map(session => <article key={session.id} className="rounded-2xl bg-white p-6 border border-slate-100 shadow-sm"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-extrabold text-slate-900">{session.workout_type}</h3><p className="mt-1 text-xs text-slate-400">{new Date(session.date).toLocaleString()} · {session.duration_mins} min</p></div><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">{session.sets.length} sets logged</span></div>{session.note && <p className="mt-3 text-sm text-slate-500">{session.note}</p>}{session.sets.length > 0 && <div className="mt-4 flex flex-wrap gap-2">{session.sets.map((set,index) => <span key={`${session.id}-${index}`} className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">{set.exercise_name} · {set.reps} reps{set.weight != null ? ` · ${set.weight} kg` : ''}</span>)}</div>}</article>)}</div>
                     </section>
                   )}
                 </motion.div>
               )}
 
               {activeTab === 'insights' && (
-                <InsightsTab data={insightData} loading={insightsLoading} days={insightDays} onDaysChange={setInsightDays} />
+                <InsightsTab data={insightData} loading={insightsLoading} days={insightDays} onDaysChange={setInsightDays} sessions={workoutSessions} />
               )}
             </motion.div>
           )}

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, Index, Time
+from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, Index, Time, JSON
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime
 
@@ -32,6 +32,14 @@ class Profile(Base):
     snack_time = Column(Time, nullable=True)
     dinner_time = Column(Time, nullable=True)
     sleep_time = Column(Time, nullable=True)
+
+class MealPlan(Base):
+    __tablename__ = "meal_plans"
+    id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("profile.id"), nullable=False, unique=True)
+    plan_data = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 class FoodItem(Base):
     __tablename__ = "food_items"

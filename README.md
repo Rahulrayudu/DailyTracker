@@ -29,6 +29,9 @@ This is an actively developed single-user prototype. Implemented today:
 - Estimated BMR, maintenance calories, goal calories, BMI screening value, and
   starter macro targets, plus a personalized seven-day calorie and activity
   schedule.
+- Saved seven-day meal plans based on the profile's calorie target, diet choice,
+  and meal times, with meal swaps, editable portions, a consolidated grocery
+  list, and one-tap logging for today's planned meals.
 - Basic AI coach chat and workout planning.
 - Searchable exercise library, equipment-filtered workout templates, active
   workout set logging, and recent workout history.
@@ -42,12 +45,12 @@ This is an actively developed single-user prototype. Implemented today:
 
 Still planned or incomplete:
 
-- Broader Indian recipe coverage, saved meals, and photo logging. An optional
-  offline USDA Foundation Foods importer is available.
+- Broader Indian recipe coverage, custom saved recipes, and photo logging. An
+  optional offline USDA Foundation Foods importer is available.
 - Sleep, mood, steps, and other activity tracking remain planned.
 - Advanced workout progression, exercise demonstrations, and personalized
   injury accommodations.
-- Meal planning, grocery lists, deeper cross-signal reports, and reminders.
+- Deeper cross-signal reports and reminders.
 - Trend-based calorie target adjustments and richer meal-planning guidance.
 - Authentication, installable/offline PWA support, scheduled backups, data
   export, and Mac auto-start configuration.
@@ -339,6 +342,11 @@ and data export tool are planned but not implemented yet.
 | `GET` | `/health` | API health check. |
 | `GET`, `POST` | `/profile` | Read or update the profile, routine, and calculated health targets. |
 | `GET` | `/profile/weekly-plan` | Build the next seven days of calorie, meal-time, and activity guidance in IST. |
+| `GET` | `/meal-plans/current` | Read the saved seven-day meal plan and consolidated grocery list. |
+| `POST` | `/meal-plans/generate` | Generate or replace the saved plan from profile settings and local food data. |
+| `POST` | `/meal-plans/{id}/swap` | Replace a planned meal and recalculate the grocery list. |
+| `POST` | `/meal-plans/{id}/portion` | Resize a planned meal and recalculate its nutrition and grocery quantities. |
+| `POST` | `/meal-plans/{id}/log` | Add today's planned meal and its nutrition to the food log. |
 | `GET` | `/insights?days=7` | Aggregate nutrition, weight, water, and workout trends for 7–90 days. |
 | `GET` | `/search-food?q=...` | Search the local food catalog. |
 | `GET` | `/foods/favorites` | List favorite catalog foods. |
@@ -412,13 +420,13 @@ project database.
 
 ## Roadmap
 
-1. Improve nutrition database coverage and food logging workflows.
+1. Expand Indian food coverage, custom recipes, and photo logging.
 2. Complete tracking with sleep, mood, and activity metrics (water and weight
    logging are already implemented).
 3. Add workout progression, exercise demonstrations, and more personalized
    accommodations.
-4. Add guarded coach actions, meal planning, and grocery lists.
-5. Build nutrition and activity insights and reports.
+4. Add grounded local nutrition retrieval and guarded Coach actions.
+5. Build deeper nutrition/activity insights and reminders.
 6. Add local authentication, backup/export automation, and Mac launch-at-login.
 7. Add PWA/offline support, accessibility polish, and automated regression
    coverage.

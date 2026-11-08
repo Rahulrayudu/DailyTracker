@@ -15,7 +15,7 @@ class WorkoutService:
             {"name": "Plank", "muscle_group": "Core", "equipment": "None", "difficulty": "Beginner", "instructions": "Keep elbows under shoulders, brace gently, and breathe throughout the hold.", "common_mistakes": "Holding your breath or letting the lower back sag"},
             {"name": "Pullups", "muscle_group": "Back", "equipment": "Gym", "difficulty": "Advanced", "instructions": "Start from a controlled hang and pull without swinging.", "common_mistakes": "Kipping or straining through shoulder pain"},
             {"name": "Lunges", "muscle_group": "Legs", "equipment": "None", "difficulty": "Beginner", "instructions": "Step to a comfortable distance, lower under control, and push through the front foot.", "common_mistakes": "Losing balance or forcing a painful range"},
-            {"name": "Glute Bridge", "muscle_group": "Legs", "equipment": "None", "difficulty": "Beginner", "instructions": "Lie on your back, brace lightly, and lift hips until shoulders, hips, and knees align.", "common_mistakes": "Overarching the lower back at the top"},
+            {"name": "Glute Bridge", "muscle_group": "Glutes", "equipment": "None", "difficulty": "Beginner", "instructions": "Lie on your back, brace lightly, and lift hips until shoulders, hips, and knees align.", "common_mistakes": "Overarching the lower back at the top"},
             {"name": "Bird Dog", "muscle_group": "Core", "equipment": "None", "difficulty": "Beginner", "instructions": "On hands and knees, extend opposite arm and leg while keeping hips level.", "common_mistakes": "Rotating the trunk or arching the back"},
             {"name": "Dumbbell Goblet Squat", "muscle_group": "Legs", "equipment": "Dumbbells", "difficulty": "Beginner", "instructions": "Hold one dumbbell at chest height, sit comfortably between hips, and stand steadily.", "common_mistakes": "Rushing the descent or allowing heels to lift"},
             {"name": "Dumbbell Romanian Deadlift", "muscle_group": "Legs", "equipment": "Dumbbells", "difficulty": "Intermediate", "instructions": "With a soft knee bend, push hips back and lower dumbbells close to legs; stand by driving hips forward.", "common_mistakes": "Turning it into a squat or rounding the back"},
@@ -27,6 +27,24 @@ class WorkoutService:
             {"name": "Lat Pulldown", "muscle_group": "Back", "equipment": "Gym", "difficulty": "Beginner", "instructions": "Pull the bar toward the upper chest while keeping your torso steady.", "common_mistakes": "Pulling behind the neck or leaning far backward"},
             {"name": "Leg Press", "muscle_group": "Legs", "equipment": "Gym", "difficulty": "Beginner", "instructions": "Lower the platform only as far as your hips stay supported, then press smoothly.", "common_mistakes": "Locking knees or allowing the lower back to round"},
             {"name": "Walking", "muscle_group": "Cardio", "equipment": "None", "difficulty": "Beginner", "instructions": "Walk at a comfortable pace and increase duration gradually.", "common_mistakes": "Increasing pace or distance too quickly"},
+            {"name": "Dumbbell Biceps Curl", "muscle_group": "Biceps", "equipment": "Dumbbells", "difficulty": "Beginner", "instructions": "Keep elbows near your sides and curl the weights without swinging your torso.", "common_mistakes": "Using momentum or letting elbows drift forward"},
+            {"name": "Cable Biceps Curl", "muscle_group": "Biceps", "equipment": "Gym", "difficulty": "Beginner", "instructions": "Stand tall, keep your upper arms steady, and curl the handle through a comfortable range.", "common_mistakes": "Leaning back or allowing the cable to pull your arms down quickly"},
+            {"name": "Dumbbell Wrist Curl", "muscle_group": "Forearms", "equipment": "Dumbbells", "difficulty": "Beginner", "instructions": "Rest your forearms on your thighs and move only through a comfortable wrist range.", "common_mistakes": "Using a heavy load or lifting the forearms"},
+            {"name": "Reverse Cable Curl", "muscle_group": "Forearms", "equipment": "Gym", "difficulty": "Beginner", "instructions": "Use a light straight-bar attachment, keep wrists neutral, and curl without rocking.", "common_mistakes": "Bending the wrists or using momentum"},
+            {"name": "Close-Grip Push-Up", "muscle_group": "Triceps", "equipment": "None", "difficulty": "Beginner", "instructions": "Keep hands under your shoulders, brace your body, and lower only as far as comfortable.", "common_mistakes": "Flaring elbows or letting hips sag"},
+            {"name": "Dumbbell Overhead Triceps Extension", "muscle_group": "Triceps", "equipment": "Dumbbells", "difficulty": "Beginner", "instructions": "Hold one light dumbbell overhead and bend your elbows while keeping your ribs relaxed.", "common_mistakes": "Arching the back or forcing a deep elbow bend"},
+            {"name": "Cable Triceps Pressdown", "muscle_group": "Triceps", "equipment": "Gym", "difficulty": "Beginner", "instructions": "Keep elbows close to your sides and press the handle down with control.", "common_mistakes": "Rocking the torso or letting elbows move forward"},
+            {"name": "Bodyweight Squat", "muscle_group": "Quads", "equipment": "None", "difficulty": "Beginner", "instructions": "Sit between your hips to a comfortable depth, then stand with steady balance.", "common_mistakes": "Allowing knees to collapse inward or heels to lift"},
+            {"name": "Dumbbell Step-Up", "muscle_group": "Quads", "equipment": "Dumbbells", "difficulty": "Beginner", "instructions": "Use a stable low step, place the whole foot on it, and stand without pushing off hard from the floor leg.", "common_mistakes": "Using a step that is too high or letting the knee cave inward"},
+            {"name": "Leg Extension", "muscle_group": "Quads", "equipment": "Gym", "difficulty": "Beginner", "instructions": "Set the machine comfortably and extend your knees smoothly without snapping them straight.", "common_mistakes": "Using momentum or locking the knees forcefully"},
+            {"name": "Hamstring Walkout", "muscle_group": "Hamstrings", "equipment": "None", "difficulty": "Beginner", "instructions": "From a bridge position, take small heel steps out and back while keeping hips lifted only as high as comfortable.", "common_mistakes": "Letting the lower back arch or taking steps that are too long"},
+            {"name": "Dumbbell Single-Leg Romanian Deadlift", "muscle_group": "Hamstrings", "equipment": "Dumbbells", "difficulty": "Intermediate", "instructions": "Hold a light dumbbell, hinge at the hips, and reach the free leg back while keeping your balance supported as needed.", "common_mistakes": "Rounding the back or forcing range beyond balance"},
+            {"name": "Seated Leg Curl", "muscle_group": "Hamstrings", "equipment": "Gym", "difficulty": "Beginner", "instructions": "Adjust the pads, curl your heels smoothly toward the seat, and return with control.", "common_mistakes": "Lifting hips or letting the weight stack drop"},
+            {"name": "Dumbbell Hip Thrust", "muscle_group": "Glutes", "equipment": "Dumbbells", "difficulty": "Beginner", "instructions": "Support your upper back on a stable surface, place a light dumbbell across your hips, and extend hips without arching.", "common_mistakes": "Using an unstable bench or arching the lower back"},
+            {"name": "Hip Thrust Machine", "muscle_group": "Glutes", "equipment": "Gym", "difficulty": "Beginner", "instructions": "Set the pad securely, brace gently, and extend your hips through a comfortable range.", "common_mistakes": "Overextending the back or rushing the lowering phase"},
+            {"name": "Standing Calf Raise", "muscle_group": "Calves", "equipment": "None", "difficulty": "Beginner", "instructions": "Hold a stable support, rise onto the balls of your feet, pause, and lower slowly.", "common_mistakes": "Bouncing or using an unstable surface"},
+            {"name": "Dumbbell Calf Raise", "muscle_group": "Calves", "equipment": "Dumbbells", "difficulty": "Beginner", "instructions": "Hold light dumbbells by your sides and raise and lower your heels with control.", "common_mistakes": "Bouncing or rushing through the movement"},
+            {"name": "Seated Calf Raise", "muscle_group": "Calves", "equipment": "Gym", "difficulty": "Beginner", "instructions": "Set the pad comfortably above your knees and lift your heels smoothly through a comfortable range.", "common_mistakes": "Bouncing the weight or forcing a painful stretch"},
         ]
 
         self.templates = [
@@ -109,7 +127,9 @@ class WorkoutService:
         Sex: {profile.sex}
         Equipment: {preferences.get('equipment', 'Home')}
         Time: {preferences.get('duration', '45')} mins
+        Muscle focus: {preferences.get('muscle_group') or 'Balanced full body'}
         Available exercise names (only choose from these): {', '.join(ex.name for ex in exercise_library)}
+        Use only the available exercise names. When a muscle focus is specified, keep every exercise focused on that muscle group.
         Safety: favor beginner-friendly variations, include a brief warm-up note, and tell the user to stop if they feel pain. Do not prescribe maximum lifts or diagnose injuries.
         
         Return ONLY a JSON object:
@@ -161,6 +181,8 @@ class WorkoutService:
             plan["workout_name"] = str(plan.get("workout_name", "AI Workout"))[:120]
             plan["reasoning"] = str(plan.get("reasoning", "A balanced session based on your selected equipment."))[:500]
             plan["warm_up"] = str(plan.get("warm_up", "Start with a few minutes of easy movement and comfortable dynamic mobility."))[:400]
+            plan["muscle_group"] = preferences.get("muscle_group")
+            plan["equipment"] = preferences.get("equipment", "Home")
             plan["source"] = "ai"
             if not valid_exercises:
                 return None
