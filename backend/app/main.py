@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,7 +16,7 @@ from math import floor
 from .database import get_db, init_db
 from .models.models import Profile, HealthLog, FoodItem, FoodFavorite, Exercise, WorkoutSession, WorkoutSet, WaterLog, WeightLog, MealPlan
 from .ai_engine import ai_engine
-from .nutrition_service import catalog_food_drafts
+from .nutrition_service import catalog_food_drafts, normalize_attached_measurements
 from .meal_planner import adjust_planned_meal_portion, generate_weekly_plan, preserve_logged_meals, required_food_names, swap_planned_meal
 from .workout_service import workout_service
 from ..seed_db import seed_nutrition_db
@@ -139,6 +140,9 @@ class LogCreate(BaseModel):
 
 class FoodDraftRequest(BaseModel):
     text: str
+    context: Optional[str] = None
+    clarification_type: Optional[str] = None
+    previous_question: Optional[str] = None
 
 class MealPlanSwapRequest(BaseModel):
     plan_date: date
@@ -773,6 +777,15 @@ def update_water(log_id: int, data: WaterCreate, db: Session = Depends(get_db)):
     db.commit(); db.refresh(log)
     return log
 
+@app.delete("/tracking/water/{log_id}")
+def delete_water(log_id: int, db: Session = Depends(get_db)):
+    log = db.query(WaterLog).filter(WaterLog.id == log_id).first()
+    if not log:
+        raise HTTPException(status_code=404, detail="Water entry not found.")
+    db.delete(log)
+    db.commit()
+    return {"status": "deleted", "id": log_id}
+
 def sync_profile_weight_from_latest_log(db: Session):
     profile = db.query(Profile).first()
     latest_log = db.query(WeightLog).order_by(WeightLog.timestamp.desc(), WeightLog.id.desc()).first()
@@ -1060,13 +1073,106 @@ async def get_ai_status():
 
 @app.post("/ai/food-draft")
 async def food_draft(request: FoodDraftRequest, db: Session = Depends(get_db)):
-    if not request.text.strip():
+    user_message = request.text.strip()
+    context = (request.context or "").strip()
+    normalized_reply = re.sub(r"[^a-z0-9\s]", "", user_message.casefold())
+    normalized_reply = " ".join(normalized_reply.split())
+    affirmation_words = {"yes", "yeah", "yep", "correct", "right", "thats right", "that is right", "exactly"}
+    affirmation = normalized_reply in affirmation_words
+    affirmative_detail = re.match(r"^\s*(?:yes|yeah|yep|correct|right)[,\s]+(.+)$", user_message, re.IGNORECASE)
+    no_more_food = normalized_reply in {
+        "no", "no more", "nothing else", "thats all", "that is all", "no thats all",
+        "not yet", "not yet anything", "nothing yet", "no more food", "no thats it", "that is it",
+    } or bool(re.search(r"\b(?:not yet anything|nothing else|no more foods?|thats all|that is all)\b", normalized_reply))
+    global_single_portion = bool(re.search(
+        r"\b(?:everything|all(?: of them)?|each|every(?:thing| item| food))\b.*\b(?:single|one|1)\s+(?:portion|serving)\b"
+        r"|\b(?:single|one|1)\s+(?:portion|serving)\s+(?:each|for each)\b",
+        normalized_reply,
+    ))
+
+    clarification_resolution = None
+    if context:
+        if request.clarification_type == "more_foods" and no_more_food:
+            text = context
+            clarification_resolution = "no_more_food"
+        elif request.clarification_type == "confirm_food" and affirmation:
+            text = context
+            clarification_resolution = "confirmed_food"
+        elif request.clarification_type == "confirm_food" and affirmative_detail:
+            # A confirmation plus a corrected description is the user's
+            # replacement wording, not a second food to append to the typo.
+            text = affirmative_detail.group(1).strip()
+            clarification_resolution = "confirmed_food"
+        elif global_single_portion:
+            text = f"{context}\nAdditional details: every listed food was one single portion"
+            clarification_resolution = "portion_provided"
+        elif request.clarification_type == "missing_portion":
+            text = f"{context}\nAdditional details: {user_message}"
+            clarification_resolution = "portion_provided"
+        else:
+            text = f"{context}\nAdditional details: {user_message}"
+    else:
+        text = user_message
+    text = normalize_attached_measurements(text)
+    if not text:
         raise HTTPException(status_code=422, detail="Describe the food and amount first.")
-    catalog_draft = catalog_food_drafts(request.text.strip(), db, FOOD_SEARCH_ALIASES)
+    normalized_message = re.sub(r"[^a-z0-9\s]", "", text.casefold())
+    normalized_message = " ".join(normalized_message.split())
+    friendly_replies = {
+        "hi": "Hi! What did you have? A rough portion is fine, and I’ll help log it.",
+        "hello": "Hello! What would you like to log today? Just describe what you had.",
+        "hey": "Hey! What did you have? A rough portion is fine.",
+        "hi there": "Hi! What did you have? A rough portion is fine, and I’ll help log it.",
+        "hello there": "Hello! What would you like to log today? Just describe what you had.",
+        "hey there": "Hey! What did you have? A rough portion is fine.",
+        "hey coach": "Hey! I can help with food logging here. Tell me what you ate and the portion.",
+        "hello coach": "Hello! I can help with food logging here. Tell me what you ate and the portion.",
+        "good morning": "Good morning! What food would you like to log today? Include a portion if you can.",
+        "good afternoon": "Good afternoon! What food would you like to log? A rough portion is fine.",
+        "good evening": "Good evening! Tell me what you ate and roughly how much, and I’ll prepare a draft.",
+        "how are you": "I’m doing well, thanks! What did you have to eat?",
+        "how are you doing": "I’m doing well, thanks! What did you have to eat?",
+        "thanks": "You’re welcome! Tell me any food you’d like to log.",
+        "thank you": "You’re welcome! Tell me any food you’d like to log.",
+        "help": "Describe one food or a list of foods, with portions like ‘a mini dosa’ or ‘a small bowl of dal.’ I’ll make separate drafts for separate foods.",
+        "what can you do": "I can estimate portions, split a list of foods into separate drafts, and help correct food-name spelling. What did you eat?",
+    }
+    if normalized_message in friendly_replies:
+        return {"status": "conversation", "reply": friendly_replies[normalized_message], "items": [], "corrections": []}
+
+    # Let a user phrase a food entry conversationally ("Hi, I had an apple")
+    # without the greeting making the catalog parser treat it as an unknown food.
+    food_text = re.sub(
+        r"^(?:hi+|hello+|hey+)(?:\s+(?:there|coach))?[\s,!.:;-]+",
+        "",
+        text,
+        count=1,
+        flags=re.IGNORECASE,
+    ).strip() or text
+    normalized_food_text = re.sub(r"[^a-z0-9\s]", "", food_text.casefold())
+    normalized_food_text = " ".join(normalized_food_text.split())
+    if normalized_food_text in friendly_replies:
+        return {"status": "conversation", "reply": friendly_replies[normalized_food_text], "items": [], "corrections": []}
+
+    catalog_draft = catalog_food_drafts(food_text, db, FOOD_SEARCH_ALIASES)
     if catalog_draft:
         return catalog_draft
     try:
-        return await ai_engine.create_food_draft(request.text.strip())
+        result = await ai_engine.create_food_draft(food_text, clarification_resolution=clarification_resolution)
+        if result.get("status") == "clarification":
+            question = str(result.get("question") or "").casefold()
+            normalized_question = " ".join(re.sub(r"[^a-z0-9\s]", "", question).split())
+            if re.search(r"\bwhat else\b|\banything else\b|\bwhat other food", question):
+                result["clarification_type"] = "more_foods"
+            elif re.search(r"\bare you referring\b|\bdid you mean\b|\bdo you mean\b|\bis that right\b", question):
+                result["clarification_type"] = "confirm_food"
+            else:
+                result["clarification_type"] = "missing_portion"
+            normalized_previous_question = " ".join(re.sub(r"[^a-z0-9\s]", "", (request.previous_question or "").casefold()).split())
+            if normalized_previous_question and normalized_question == normalized_previous_question:
+                result["question"] = "I still need the portion for that food. A size like mini, single, or one small bowl is enough."
+                result["clarification_type"] = "missing_portion"
+        return result
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Nutrition estimate unavailable: {e}")
 

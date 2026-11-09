@@ -38,8 +38,8 @@ function BodyFigure({ side, selectedMuscle, onSelect }) {
           <stop offset="1" stopColor="#64748B" stopOpacity=".62" />
         </linearGradient>
         <linearGradient id={`body-active-${side}`} x1="0" x2="1" y1="0" y2="1">
-          <stop offset="0" stopColor="#67F7D2" />
-          <stop offset="1" stopColor="#38BDF8" />
+          <stop offset="0" stopColor="#FB7185" />
+          <stop offset="1" stopColor="#FFA45B" />
         </linearGradient>
       </defs>
       <g fill={`url(#body-base-${side})`} stroke="#DCE6F5" strokeOpacity=".5" strokeWidth="1.5">
@@ -66,7 +66,7 @@ function BodyFigure({ side, selectedMuscle, onSelect }) {
             onKeyDown={event => onKeyDown(event, name)}
             className={`muscle-map-region ${selected ? 'is-selected' : ''}`}
             fill={selected ? `url(#body-active-${side})` : 'rgba(148,163,184,.28)'}
-            stroke={selected ? '#A7F3D0' : 'rgba(226,232,240,.5)'}
+            stroke={selected ? '#FB7185' : 'rgba(226,232,240,.5)'}
             strokeWidth={selected ? '1.7' : '1'}
           />
         );

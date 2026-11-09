@@ -56,7 +56,7 @@ FILLER_WORDS = {
     "i", "had", "ate", "eaten", "eat", "consumed", "logged", "log",
     "today", "just", "of", "the", "my", "please", "food", "for",
     "breakfast", "lunch", "dinner", "snack", "meal", "at", "around",
-    "additional", "details", "some", "about", "roughly", "approximately", "approx", "size", "sized",
+    "additional", "details", "some", "about", "roughly", "approximately", "approx", "size", "sized", "one", "single",
     "and", "with", "plus", "along",
 }
 
@@ -77,6 +77,16 @@ def _unit(raw: str) -> str:
     return UNIT_ALIASES.get(value, value)
 
 
+def normalize_attached_measurements(text: str) -> str:
+    """Separate typed-together quantities such as ``100gmapple``."""
+    unit = r"kilograms?|kgs?|kg|grams?|grammes?|grms?|gms?|gm|g|milliliters?|millilitres?|ml|liters?|litres?|l"
+    return re.sub(
+        rf"(?i)(\d+(?:[.,]\d+)?)({unit})(?=[a-z])",
+        r"\1 \2 ",
+        text,
+    )
+
+
 def _food_vocabulary(items, aliases):
     words = set()
     for item in items:
@@ -86,6 +96,7 @@ def _food_vocabulary(items, aliases):
 
 
 def correct_food_spelling(text: str, items, aliases):
+    text = normalize_attached_measurements(text)
     vocabulary = _food_vocabulary(items, aliases)
     corrections = []
 
@@ -112,12 +123,17 @@ def _unit_amount(text: str):
         measured = [
             match for match in matches
             if match.group("unit") or match.group("size")
-            or match.group("amount").lower() not in {"a", "an"}
+            or match.group("amount").lower() not in {"a", "an", "one"}
         ]
-        if len(measured) == 1 and len(measured) + sum(
-            match.group("amount").lower() in {"a", "an"} and not match.group("unit") and not match.group("size")
+        unmeasured_are_determiners = all(
+            match in measured or (
+                match.group("amount").lower() in {"a", "an", "one"}
+                and not match.group("unit")
+                and not match.group("size")
+            )
             for match in matches
-        ) == len(matches):
+        )
+        if len(measured) == 1 and unmeasured_are_determiners:
             matches = measured
     if len(matches) != 1:
         if matches:
@@ -331,6 +347,7 @@ def catalog_food_draft(text: str, db: Session, aliases: dict):
 def catalog_food_drafts(text: str, db: Session, aliases: dict):
     """Resolve clear catalog foods independently and retain spelling fixes."""
     items = db.query(FoodItem).filter(FoodItem.name.in_(list(aliases))).all()
+    text = normalize_attached_measurements(text)
     sections = re.split(r"\nadditional details:\s*", text, flags=re.IGNORECASE)
     corrected_text, corrections = correct_food_spelling(sections[0], items, aliases)
     portion_sections = []
@@ -346,12 +363,19 @@ def catalog_food_drafts(text: str, db: Session, aliases: dict):
 
     clarifications = [draft for draft in drafts if draft["status"] == "clarification"]
     if clarifications and portion_sections:
+        universal_single_portion = any(
+            re.search(r"\b(?:everything|all(?: of them)?|each|every(?:thing| item| food))\b.*\b(?:single|one|1)\s+(?:portion|serving)\b", section, re.IGNORECASE)
+            or re.fullmatch(r"\s*(?:single|one|1)\s+(?:portion|serving)\s+(?:each|for each)\s*", section, re.IGNORECASE)
+            for section in portion_sections
+        )
         portion_parts = [
             part.strip()
             for section in portion_sections
             for part in re.split(split_pattern, section, flags=re.IGNORECASE)
             if part.strip()
         ]
+        if universal_single_portion:
+            portion_parts = ["single portion"] * len(clarifications)
         if len(portion_parts) == len(clarifications):
             clarification_index = 0
             for index, draft in enumerate(drafts):
@@ -369,7 +393,7 @@ def catalog_food_drafts(text: str, db: Session, aliases: dict):
             f"What portion sizes did you have for {foods_needing_portions}? "
             "You can say ‘one small bowl’ or ‘two pieces’ for each."
         )
-        return {"status": "clarification", "question": question, "corrections": corrections}
+        return {"status": "clarification", "question": question, "clarification_type": "missing_portion", "corrections": corrections}
 
     if len(drafts) == 1:
         return {**drafts[0], "items": drafts, "corrections": corrections}

@@ -3,8 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
 import {
   Activity, AlertCircle, Apple, ArrowLeft, BarChart3, Check, ChevronDown,
-  Droplets, Dumbbell, Flame, Home, Info, MessageCircle, Plus, Salad, Scale,
-  Search, Sparkles, Sprout, User2, Wheat, X,
+  Droplets, Dumbbell, Flame, Home, Info, MessageCircle, Plus, Scale,
+  Search, Sparkles, Sprout, Trash2, User2, Wheat, X,
 } from 'lucide-react';
 import MuscleMap from './components/MuscleMap';
 
@@ -55,30 +55,32 @@ function addCalendarDays(dateString, offset) {
 }
 
 const MacroCard = ({ label, value, target, unit, color, icon }) => {
-  const percent = Math.min((value / (target || 1)) * 100, 100);
+  const currentValue = Math.max(0, Number(value) || 0);
+  const targetValue = Math.max(1, Number(target) || 1);
+  const rawPercent = (currentValue / targetValue) * 100;
+  const percent = Math.min(rawPercent, 100);
+  const overTarget = rawPercent > 100;
   const Icon = icon;
   return (
-    <div className="bg-white/80 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm transition-all hover:shadow-xl hover:-translate-y-1 duration-300 relative overflow-hidden group">
-      <div className={`absolute top-0 left-0 w-1 h-full ${color}`}></div>
+    <div className={`macro-card bg-white/80 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm transition-all hover:shadow-xl hover:-translate-y-1 duration-300 relative overflow-hidden group ${overTarget ? 'is-over-target' : rawPercent >= 80 ? 'is-near-target' : ''}`} style={{ '--data-color': color }}>
+      <div className="macro-card-accent absolute top-0 left-0 w-1 h-full" aria-hidden="true" />
       <div className="flex items-center justify-between mb-4">
         <span className="text-xs uppercase text-slate-400 font-bold tracking-wider">{label}</span>
-        <span className="grid h-9 w-9 place-items-center rounded-xl border border-white/10 bg-white/5 text-slate-300"><Icon size={18} strokeWidth={1.8} /></span>
+        <span className="macro-card-icon grid h-9 w-9 place-items-center rounded-xl border border-white/10 bg-white/5"><Icon size={18} strokeWidth={1.8} aria-hidden="true" /></span>
       </div>
-      <span className="text-4xl font-extrabold block text-slate-900 tracking-tight">
-        {value?.toFixed(0) || 0}<span className="text-sm font-medium text-slate-400 ml-2">{unit}</span>
+      <span className="num macro-card-value text-4xl font-extrabold block tracking-tight">
+        {currentValue.toFixed(0)}<span className="macro-card-unit text-sm font-medium ml-2">{unit}</span>
       </span>
-      <div className="w-full h-2 bg-slate-100 rounded-full mt-6 overflow-hidden">
+      <div className="macro-card-track w-full h-2 rounded-full mt-6 overflow-hidden" role="progressbar" aria-label={`${label} target progress`} aria-valuemin="0" aria-valuemax={targetValue} aria-valuenow={Math.min(currentValue, targetValue)} aria-valuetext={overTarget ? `Over by ${Math.round(currentValue - targetValue)} ${unit}` : `${Math.round(rawPercent)} percent of target`}>
         <motion.div 
           initial={{ width: 0 }}
           animate={{ width: `${percent}%` }}
-          className={`${color} h-full transition-all duration-1000 ease-out relative`}
-        >
-          <div className="absolute inset-0 bg-gradient-to-r from-transparent to-white/30 animate-pulse"></div>
-        </motion.div>
+          className="macro-card-progress h-full transition-all duration-1000 ease-out relative"
+        />
       </div>
       <div className="flex justify-between items-center mt-2">
-        <span className="text-[10px] text-slate-400 font-medium">Target: {target?.toFixed(0) || 0} {unit}</span>
-        <span className="text-[10px] font-bold text-green-600">{percent.toFixed(0)}%</span>
+        <span className="macro-card-target text-xs font-medium">Target {targetValue.toFixed(0)} {unit}</span>
+        <span className="macro-card-status text-xs font-bold" aria-live="polite">{overTarget ? `Over by ${Math.round(currentValue - targetValue)} ${unit}` : `${Math.round(rawPercent)}%`}</span>
       </div>
     </div>
   );
@@ -93,11 +95,11 @@ const DEFAULT_PROFILE_FORM = {
 };
 
 const APP_TABS = [
-  { id: 'home', Icon: Home, label: 'Home' },
-  { id: 'coach', Icon: MessageCircle, label: 'Coach' },
-  { id: 'train', Icon: Dumbbell, label: 'Train' },
-  { id: 'insights', Icon: BarChart3, label: 'Insights' },
-  { id: 'profile', Icon: User2, label: 'Profile' },
+  { id: 'home', Icon: Home, label: 'Home', color: 'var(--c-today)' },
+  { id: 'coach', Icon: MessageCircle, label: 'Coach', color: 'var(--c-coach)' },
+  { id: 'train', Icon: Dumbbell, label: 'Train', color: 'var(--c-workout)' },
+  { id: 'insights', Icon: BarChart3, label: 'Insights', color: 'var(--c-insights)' },
+  { id: 'profile', Icon: User2, label: 'Profile', color: 'var(--c-today)' },
 ];
 
 const profileToForm = (profile) => {
@@ -324,8 +326,8 @@ function InsightsTab({ data, loading, days, onDaysChange, sessions = [], records
 
   return (
     <div className="insights-page min-w-0 space-y-8">
-      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div><p className="text-xs font-bold uppercase tracking-[.22em] text-green-600">Patterns over time</p><h2 className="mt-2 text-3xl font-extrabold tracking-tight">Your insights</h2><p className="mt-2 text-sm text-slate-400">Nutrition, weigh-ins and workouts from your local logs, grouped by India Standard Time.</p></div>
+      <div className="insights-page-heading flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div className="section-heading"><p className="text-xs font-bold uppercase tracking-[.22em] text-green-600">Patterns over time</p><h2 className="mt-2 text-3xl font-extrabold tracking-tight">Your insights</h2><p className="mt-2 text-sm text-slate-400">Nutrition, weigh-ins and workouts from your local logs, grouped by India Standard Time.</p></div>
         <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Look back
           <select value={days} onChange={event => onDaysChange(Number(event.target.value))} className="ml-3 rounded-xl border border-slate-200 px-3 py-2 text-sm normal-case">
             <option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option>
@@ -339,7 +341,7 @@ function InsightsTab({ data, loading, days, onDaysChange, sessions = [], records
             <div className="glass-card p-5"><p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">Average logged calories</p><p className="mt-3 text-3xl font-extrabold text-orange-300">{summary.average_calories || 0}<span className="ml-2 text-xs text-slate-500">kcal/day</span></p><p className="mt-2 text-xs text-slate-500">Across {summary.logged_days || 0} logged days</p></div>
             <div className="glass-card p-5"><p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">Calorie target</p><p className="mt-3 text-3xl font-extrabold text-emerald-300">{summary.calorie_target || 0}<span className="ml-2 text-xs text-slate-500">kcal/day</span></p><p className="mt-2 text-xs text-slate-500">Set from your Profile</p></div>
             <div className="glass-card p-5"><p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">Goal days</p><p className="mt-3 text-3xl font-extrabold">{summary.goal_days || 0}<span className="ml-2 text-xs text-slate-500">/ {summary.logged_days || 0}</span></p><p className="mt-2 text-xs text-slate-500">{summary.goal_label || 'Log nutrition to track your goal'}</p></div>
-            <div className="glass-card p-5"><p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">Workouts</p><p className="mt-3 text-3xl font-extrabold text-violet-300">{summary.workout_minutes || 0}<span className="ml-2 text-xs text-slate-500">minutes</span></p><p className="mt-2 text-xs text-slate-500">{summary.workout_count || 0} sessions in this period</p></div>
+            <div className="glass-card p-5"><p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">Workouts</p><p className="mt-3 text-3xl font-extrabold text-rose-300">{summary.workout_minutes || 0}<span className="ml-2 text-xs text-slate-500">minutes</span></p><p className="mt-2 text-xs text-slate-500">{summary.workout_count || 0} sessions in this period</p></div>
           </div>
 
           <section className="glass-card p-5 md:p-7">
@@ -347,7 +349,7 @@ function InsightsTab({ data, loading, days, onDaysChange, sessions = [], records
             {caloriesLogged ? <div className="w-full overflow-x-auto"><svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="min-w-[640px] w-full" role="img" aria-label="Daily calories compared with your target">
               <title>Daily calories compared with your calorie target</title>
               {[0, 0.5, 1].map(tick => { const y = chartTop + plotHeight * tick; return <g key={tick}><line x1={chartLeft} x2={chartWidth - chartRight} y1={y} y2={y} stroke="rgba(255,255,255,.09)"/><text x={chartLeft - 8} y={y + 4} textAnchor="end" fill="#8490AA" fontSize="10">{Math.round(calorieMaximum * (1 - tick))}</text></g>; })}
-              {summary.calorie_target > 0 && <><line x1={chartLeft} x2={chartWidth - chartRight} y1={calorieY(summary.calorie_target)} y2={calorieY(summary.calorie_target)} stroke="#34F5C5" strokeWidth="2" strokeDasharray="6 5"/><text x={chartWidth - chartRight} y={calorieY(summary.calorie_target) - 7} textAnchor="end" fill="#34F5C5" fontSize="10">Target {summary.calorie_target}</text></>}
+              {summary.calorie_target > 0 && <><line x1={chartLeft} x2={chartWidth - chartRight} y1={calorieY(summary.calorie_target)} y2={calorieY(summary.calorie_target)} stroke="#FBBF24" strokeWidth="2" strokeDasharray="6 5"/><text x={chartWidth - chartRight} y={calorieY(summary.calorie_target) - 7} textAnchor="end" fill="#FBBF24" fontSize="10">Target {summary.calorie_target}</text></>}
               {daily.map((day, index) => {
                 const width = Math.max(3, barStep * 0.58);
                 const height = day.calories > 0 ? Math.max(2, chartTop + plotHeight - calorieY(day.calories)) : 0;
@@ -365,8 +367,8 @@ function InsightsTab({ data, loading, days, onDaysChange, sessions = [], records
               {weightPoints.length > 0 ? <div className="w-full min-w-0 overflow-x-auto"><svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="min-w-[540px] w-full" role="img" aria-label="Weight trend from recorded weigh-ins">
                 <title>Weight trend</title>
                 {[0, 0.5, 1].map(tick => { const y = chartTop + plotHeight * tick; const value = weightMax - ((weightMax - weightMin) * tick); return <g key={tick}><line x1={chartLeft} x2={chartWidth - chartRight} y1={y} y2={y} stroke="rgba(255,255,255,.09)"/><text x={chartLeft - 8} y={y + 4} textAnchor="end" fill="#8490AA" fontSize="10">{value.toFixed(1)}</text></g>; })}
-                <polyline points={weightPoints.map(point => `${point.x},${point.y}`).join(' ')} fill="none" stroke="#34F5C5" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round"/>
-                {weightPoints.map(point => <g key={`${point.item.date}-${point.x}`}><circle cx={point.x} cy={point.y} r="5" fill="#34F5C5" stroke="#08111D" strokeWidth="2"><title>{point.item.date}: {point.item.weight_kg} kg</title></circle></g>)}
+                <polyline points={weightPoints.map(point => `${point.x},${point.y}`).join(' ')} fill="none" stroke="#E879F9" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round"/>
+                {weightPoints.map(point => <g key={`${point.item.date}-${point.x}`}><circle cx={point.x} cy={point.y} r="5" fill="#E879F9" stroke="#070B14" strokeWidth="2"><title>{point.item.date}: {point.item.weight_kg} kg</title></circle></g>)}
                 {daily.map((day, index) => index % labelEvery === 0 && <text key={day.date} x={chartLeft + index * barStep + barStep / 2} y={chartHeight - 10} textAnchor="middle" fill="#8490AA" fontSize="9">{days > 14 ? day.date.slice(8) : day.day}</text>)}
               </svg></div> : <p className="rounded-xl bg-slate-900/40 p-8 text-center text-sm text-slate-400">Log a weigh-in on Home to start your weight trend.</p>}
             </section>
@@ -449,7 +451,7 @@ const ProfileField = ({ label, children, hint }) => (
   </label>
 );
 
-function DailyTrackingEntries({ kind, entries = [], editingId, editValue, setEditValue, onStartEdit, onCancelEdit, onSaveEdit }) {
+function DailyTrackingEntries({ kind, entries = [], editingId, editValue, setEditValue, onStartEdit, onCancelEdit, onSaveEdit, onDelete }) {
   if (!entries.length) return null;
   const isWeight = kind === 'weight';
   const title = isWeight ? 'Weigh-ins for this date' : 'Water entries for this date';
@@ -471,6 +473,7 @@ function DailyTrackingEntries({ kind, entries = [], editingId, editValue, setEdi
         </> : <>
           <div className="tracking-log-description"><strong>{isWeight ? `${Number(entry.weight_kg).toFixed(1)} kg` : `${entry.amount_ml} ml`}</strong><span>{formatTrackingTime(entry.timestamp)}</span></div>
           <button type="button" onClick={() => onStartEdit(entry)} className="tracking-entry-action tracking-entry-edit">Edit</button>
+          {!isWeight && onDelete && <button type="button" onClick={() => onDelete(entry.id)} className="tracking-entry-action tracking-entry-delete" aria-label={`Delete ${entry.amount_ml} ml water entry`}><Trash2 size={15} /></button>}
         </>}
       </div>)}
     </div>
@@ -514,7 +517,7 @@ function MealPlannerPanel({ profile, plan, loading, saving, onGenerate, onSwap, 
         ) : !plan ? (
           <div className="rounded-xl bg-slate-900/40 p-5">
             <p className="text-sm text-slate-300">Create a seven-day meal plan using foods in your local catalog. You can swap meals and get one combined grocery list.</p>
-            <button type="button" onClick={onGenerate} disabled={saving} className="mt-4 rounded-xl bg-green-500 px-5 py-3 text-sm font-extrabold text-slate-950 disabled:opacity-60">{saving ? 'Building your meal plan…' : 'Create my meal plan'}</button>
+            <button type="button" onClick={onGenerate} disabled={saving} className="btn btn-today mt-4 rounded-xl px-5 py-3 text-sm font-extrabold disabled:opacity-60">{saving ? 'Building your meal plan…' : 'Create my meal plan'}</button>
           </div>
         ) : (
           <>
@@ -587,13 +590,13 @@ function ProfileTab({ form, updateField, profile, weeklyPlan, planLoading, savin
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
+      <div className="profile-page-heading flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div className="section-heading">
           <p className="text-xs font-bold uppercase tracking-[.22em] text-green-600">Personal health plan · IST</p>
           <h2 className="mt-2 text-3xl font-extrabold tracking-tight">Profile & routine</h2>
           <p className="mt-2 max-w-2xl text-sm text-slate-400">Add your measurements, goal and usual schedule. The app uses them to estimate daily targets and shape a practical starter week.</p>
         </div>
-        <button onClick={onSave} disabled={saving} className="rounded-xl bg-green-500 px-6 py-3 text-sm font-extrabold text-slate-950 disabled:opacity-60">
+        <button onClick={onSave} disabled={saving} className="btn btn-today rounded-xl px-6 py-3 text-sm font-extrabold disabled:opacity-60">
           {saving ? 'Saving profile…' : profile ? 'Save changes' : 'Build my plan'}
         </button>
       </div>
@@ -666,7 +669,7 @@ function ProfileTab({ form, updateField, profile, weeklyPlan, planLoading, savin
             <div className="mb-4 flex items-end justify-between gap-4"><div><h3 className="text-xl font-extrabold">Estimated daily targets</h3><p className="mt-1 text-xs text-slate-500">Recalculate by saving when your measurements or activity change.</p></div><span className="text-xs font-semibold text-slate-500">Starting estimates</span></div>
             <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
               {[
-                { label: 'BMR · resting estimate', value: profile.bmr, unit: 'kcal/day', tone: 'text-violet-300' },
+                { label: 'BMR · resting estimate', value: profile.bmr, unit: 'kcal/day', tone: 'text-orange-300' },
                 { label: 'Maintenance estimate', value: profile.maintenance_calories, unit: 'kcal/day', tone: 'text-sky-300' },
                 { label: 'Daily goal target', value: profile.calorie_target, unit: 'kcal/day', tone: 'text-emerald-300' },
                 { label: 'BMI · screening value', value: profile.bmi, unit: '', tone: 'text-amber-300' },
@@ -742,6 +745,7 @@ export default function App() {
   const [waterEditValue, setWaterEditValue] = useState('');
   const [editingWeightLogId, setEditingWeightLogId] = useState(null);
   const [weightEditValue, setWeightEditValue] = useState('');
+  const weightAccordionRef = useRef(null);
   const [input, setInput] = useState("");
   const [category, setCategory] = useState("nutrition");
   const [loading, setLoading] = useState(false);
@@ -804,12 +808,17 @@ export default function App() {
   const [workoutSaving, setWorkoutSaving] = useState(false);
 
   const [showLogPage, setShowLogPage] = useState(false);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const fabLongPressTimerRef = useRef(null);
+  const fabLongPressedRef = useRef(false);
   const [toast, setToast] = useState(null);
   const [foodMessages, setFoodMessages] = useState([]);
   const [foodContext, setFoodContext] = useState("");
+  const [foodPendingQuestion, setFoodPendingQuestion] = useState(null);
   const [foodDrafts, setFoodDrafts] = useState([]);
   const [foodThinking, setFoodThinking] = useState(false);
   const [selectedMeal, setSelectedMeal] = useState('Snack');
+  const [foodEntryMode, setFoodEntryMode] = useState('describe');
   const [selectedFood, setSelectedFood] = useState(null);
   const [foodServings, setFoodServings] = useState('1');
   const [manualEntryOpen, setManualEntryOpen] = useState(false);
@@ -939,6 +948,65 @@ export default function App() {
     catch (e) { notify(e.response?.data?.detail || 'Could not save weight.', 'error'); }
   };
 
+  const startFabLongPress = () => {
+    fabLongPressedRef.current = false;
+    clearTimeout(fabLongPressTimerRef.current);
+    fabLongPressTimerRef.current = setTimeout(() => {
+      fabLongPressedRef.current = true;
+      setQuickAddOpen(true);
+    }, 500);
+  };
+
+  const endFabLongPress = () => clearTimeout(fabLongPressTimerRef.current);
+
+  const openQuickAddDefault = () => {
+    if (fabLongPressedRef.current) {
+      fabLongPressedRef.current = false;
+      return;
+    }
+    setActiveTab('home');
+    setQuickAddOpen(false);
+    openFoodLogger();
+  };
+
+  const openFoodLogger = (meal = 'Snack') => {
+    setSelectedMeal(meal);
+    setFoodEntryMode('describe');
+    setShowLogPage(true);
+  };
+
+  const runQuickAction = action => {
+    setQuickAddOpen(false);
+    if (action === 'food') {
+      setActiveTab('home');
+      openFoodLogger();
+    } else if (action === 'water') {
+      addWater(250);
+    } else if (action === 'weight') {
+      setActiveTab('home');
+      setShowLogPage(false);
+      window.setTimeout(() => {
+        if (weightAccordionRef.current) weightAccordionRef.current.open = true;
+        document.getElementById('home-weight-input')?.focus();
+      }, 100);
+    } else if (action === 'workout') {
+      setActiveTab('train');
+      setShowLogPage(false);
+      setTrainView('planner');
+    } else if (action === 'mood') {
+      setActiveTab('coach');
+      setShowLogPage(false);
+      setChatInput('I would like to check in about how I am feeling today.');
+    }
+  };
+
+  useEffect(() => {
+    if (!quickAddOpen) return undefined;
+    const closeOnEscape = event => { if (event.key === 'Escape') setQuickAddOpen(false); };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [quickAddOpen]);
+
   const saveWaterEdit = async logId => {
     const amount = Number(waterEditValue);
     if (!Number.isInteger(amount) || amount < 1 || amount > 5000) { notify('Water amount must be between 1 and 5000 ml.', 'error'); return; }
@@ -948,6 +1016,15 @@ export default function App() {
       await loadAllData();
       notify('Water entry updated.');
     } catch (e) { notify(e.response?.data?.detail || 'Could not update this water entry.', 'error'); }
+  };
+
+  const deleteWaterLog = async logId => {
+    if (!window.confirm('Delete this water entry?')) return;
+    try {
+      await axios.delete(`${API_BASE}/tracking/water/${logId}`);
+      await loadAllData();
+      notify('Water entry deleted.');
+    } catch (e) { notify(e.response?.data?.detail || 'Could not delete this water entry.', 'error'); }
   };
 
   const saveWeightEdit = async logId => {
@@ -1003,19 +1080,35 @@ export default function App() {
   const submitFoodMessage = async () => {
     const message = input.trim();
     if (!message || foodThinking) return;
-    const combinedText = foodContext ? `${foodContext}\nAdditional details: ${message}` : message;
-    setFoodContext(combinedText);
+    const context = foodContext.trim();
     setFoodMessages(prev => [...prev, { role: 'user', text: message }]);
     setInput('');
     setFoodThinking(true);
     setFoodDrafts([]);
     try {
-      const res = await axios.post(`${API_BASE}/ai/food-draft`, { text: combinedText });
-      if (res.data.status === 'clarification') {
+      const res = await axios.post(`${API_BASE}/ai/food-draft`, {
+        text: message,
+        ...(context ? {
+          context,
+          clarification_type: foodPendingQuestion?.type,
+          previous_question: foodPendingQuestion?.question,
+        } : {}),
+      });
+      if (res.data.status === 'conversation') {
+        setFoodContext('');
+        setFoodPendingQuestion(null);
+        setFoodDrafts([]);
+        setFoodMessages(prev => [...prev, { role: 'assistant', text: res.data.reply || 'Hi! Tell me what you ate and roughly how much.' }]);
+      } else if (res.data.status === 'clarification') {
+        const question = res.data.question || 'What portion did you have? A size like mini, single, or one small bowl is enough.';
+        setFoodContext(context || message);
+        setFoodPendingQuestion({ type: res.data.clarification_type || 'missing_portion', question });
         const corrections = (res.data.corrections || []).map(item => `“${item.original}” → “${item.corrected}”`).join(', ');
         const correctionNote = corrections ? ` I read the spelling as ${corrections}.` : '';
-        setFoodMessages(prev => [...prev, { role: 'assistant', text: `${res.data.question || 'How much did you have?'}${correctionNote}` }]);
+        setFoodMessages(prev => [...prev, { role: 'assistant', text: `${question}${correctionNote}` }]);
       } else {
+        setFoodContext('');
+        setFoodPendingQuestion(null);
         const drafts = Array.isArray(res.data.items) && res.data.items.length ? res.data.items : [res.data];
         setFoodDrafts(drafts);
         const corrections = (res.data.corrections || []).map(item => `“${item.original}” → “${item.corrected}”`).join(', ');
@@ -1062,7 +1155,12 @@ export default function App() {
       await loadAllData();
       const remainingDrafts = foodDrafts.filter((_, index) => index !== draftIndex);
       setFoodDrafts(remainingDrafts);
-      if (!remainingDrafts.length) { setFoodMessages([]); setFoodContext(''); setAiChips([]); }
+      if (!remainingDrafts.length) {
+        setFoodMessages([]);
+        setFoodContext('');
+        setFoodPendingQuestion(null);
+        setAiChips([]);
+      }
       notify(`${foodDraft.food_description} saved as its own food log.`);
     } catch (e) { notify(e.response?.data?.detail || 'Could not save the nutrition estimate.', 'error'); }
     finally { setLoading(false); }
@@ -1549,6 +1647,14 @@ export default function App() {
       ? recentFoods
       : searchResults;
 
+  const foodLogs = logs.filter(log => log.category === 'nutrition');
+  const foodLogsByMeal = foodLogs.reduce((groups, log) => {
+    const meal = ['Breakfast', 'Lunch', 'Dinner', 'Snack'].includes(log.meal) ? log.meal : 'Snack';
+    if (!groups[meal]) groups[meal] = [];
+    groups[meal].push(log);
+    return groups;
+  }, {});
+  const mealLogOrder = ['Breakfast', 'Lunch', 'Dinner', 'Snack'];
   const filteredExercises = exerciseLibrary.filter(exercise => {
     const matchesQuery = !exerciseQuery || `${exercise.name} ${exercise.instructions} ${exercise.muscle_group}`.toLowerCase().includes(exerciseQuery.toLowerCase());
     return matchesQuery && (exerciseGroup === 'Any' || exercise.muscle_group === exerciseGroup);
@@ -1569,11 +1675,11 @@ export default function App() {
   useEffect(() => { loadFoodCollections(); }, []);
 
   return (
-    <div className="app-shell min-h-screen bg-[#FBFBFF] font-poppins text-slate-900">
+    <div className="app-shell min-h-screen bg-[#070B14] font-poppins text-slate-900">
       <header className="bg-white/70 backdrop-blur-md border-b border-slate-100 sticky top-0 z-30">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 sm:h-20 flex items-center justify-between">
           <button type="button" aria-label="Open profile" className="group flex items-center gap-3 sm:gap-4 bg-transparent p-0 text-left shadow-none" onClick={() => { setActiveTab('profile'); setShowLogPage(false); }}>
-            <img src="/brand-mark.svg" alt="" width="48" height="48" className="h-10 w-10 sm:h-12 sm:w-12 rounded-2xl shadow-lg transition-transform group-hover:scale-105 duration-300" />
+            <img src="/brand-mark.svg" alt="LocalHealth Pro pulse rings logo" width="48" height="48" className="h-10 w-10 sm:h-12 sm:w-12 rounded-2xl shadow-lg transition-transform group-hover:scale-105 duration-300" />
             <div className="transition-opacity group-hover:opacity-80">
               <h1 className="text-base sm:text-xl font-extrabold text-slate-900 leading-tight tracking-tight">LocalHealth Pro</h1>
               <p className="max-w-[170px] truncate text-xs sm:text-sm text-slate-500 font-medium">{profile ? `Goal: ${profile.goal}` : "Setup Profile"}</p>
@@ -1593,116 +1699,93 @@ export default function App() {
               initial={{ opacity: 0, x: 20 }} 
               animate={{ opacity: 1, x: 0 }} 
               exit={{ opacity: 0, x: 20 }} 
-              className="space-y-10"
+              className="app-screen screen-food space-y-5"
             >
-              <div className="flex items-center gap-4 mb-6">
-                <button aria-label="Back to Home" onClick={() => setShowLogPage(false)} className="p-3 rounded-full bg-white shadow-sm border border-slate-100 text-slate-600 hover:bg-slate-50 transition-all hover:scale-110"><ArrowLeft size={19} /></button>
-                <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight">Log Your Nutrition</h2>
+              <div className="food-log-page-heading">
+                <button type="button" aria-label="Back to Home" onClick={() => setShowLogPage(false)} className="food-back-button"><ArrowLeft size={19} /></button>
+                <div className="section-heading"><p className="food-page-eyebrow">FOOD LOG</p><h2>Log food</h2><p>Add to {selectedMeal.toLowerCase()}.</p></div>
               </div>
 
-              <div className="glass-card flex flex-wrap items-center justify-between gap-4 px-6 py-4">
-                <div><p className="text-sm font-bold text-slate-800">Add this to a meal</p><p className="text-xs text-slate-500 mt-1">Choose where this food belongs in today’s log.</p></div>
-                <select aria-label="Meal" value={selectedMeal} onChange={e => setSelectedMeal(e.target.value)} className="min-h-11 rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold">
-                  {['Breakfast', 'Lunch', 'Dinner', 'Snack'].map(meal => <option key={meal} value={meal}>{meal}</option>)}
-                </select>
+              <div className="food-log-controls">
+                <div className="food-meal-picker" role="group" aria-label="Choose meal">
+                  {mealLogOrder.map(meal => <button type="button" key={meal} aria-pressed={selectedMeal === meal} onClick={() => setSelectedMeal(meal)} className={`food-meal-option ${selectedMeal === meal ? 'is-selected' : ''}`}>{meal}</button>)}
+                </div>
+                <div className="food-entry-mode" role="group" aria-label="Food entry method">
+                  <button type="button" aria-pressed={foodEntryMode === 'describe'} onClick={() => setFoodEntryMode('describe')} className={foodEntryMode === 'describe' ? 'is-selected' : ''}><Sparkles size={15} />Describe food</button>
+                  <button type="button" aria-pressed={foodEntryMode === 'search'} onClick={() => setFoodEntryMode('search')} className={foodEntryMode === 'search' ? 'is-selected' : ''}><Search size={15} />Search foods</button>
+                </div>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                <div className="bg-gradient-to-br from-green-50 to-emerald-50 p-8 rounded-[2.5rem] border border-green-100 shadow-sm space-y-6 relative overflow-hidden">
-                  <div className="absolute top-0 right-0 p-4 opacity-[.08]"><Salad size={78} strokeWidth={1.25} /></div>
-                  <div className="flex items-center gap-2 text-green-700">
-                    <Sparkles size={20} strokeWidth={1.8} />
-                    <span className="text-sm font-bold uppercase tracking-widest">Food logging assistant</span>
-                  </div>
-                  <p className="text-sm text-green-600 font-medium">Describe foods with portions like “mini,” “single,” or “small bowl.” Common catalog foods work offline; Ollama estimates other foods when running. Multiple dishes are split into separate entries.</p>
-                  <AIStatusIndicator status={ollamaStatus} loading={ollamaStatusLoading} onRefresh={refreshOllamaStatus} />
-                  
-                  <div className="flex flex-col items-center gap-4">
-                    {foodMessages.length > 0 && (
-                      <div className="w-full max-w-xl max-h-56 overflow-y-auto space-y-3 rounded-2xl bg-white/80 p-4 border border-green-100">
-                        {foodMessages.map((message, index) => (
-                          <div key={index} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                            <p className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm ${message.role === 'user' ? 'bg-green-600 text-white rounded-br-sm' : 'bg-green-50 text-slate-700 rounded-bl-sm'}`}>{message.text}</p>
-                          </div>
-                        ))}
-                        {foodThinking && <div className="flex items-center gap-3 rounded-2xl bg-white/90 border border-green-100 px-4 py-3 text-sm text-slate-600 shadow-sm" role="status" aria-live="polite"><i className="w-4 h-4 shrink-0 rounded-full border-2 border-green-500/25 border-t-green-600 animate-spin"/><span>Understanding the food, checking the portion, and estimating nutrition…</span></div>}
-                      </div>
-                    )}
-                    {foodDrafts.map((foodDraft, draftIndex) => (
-                      <div key={`${foodDraft.food_description}-${draftIndex}`} className="w-full max-w-xl rounded-2xl bg-white p-5 border border-green-100 shadow-sm">
-                        <div className="flex items-start justify-between gap-3 mb-4">
-                          <div><p className="text-sm font-bold text-slate-800">{foodDrafts.length > 1 ? `Food ${draftIndex + 1} of ${foodDrafts.length}` : 'Nutrition estimate'}</p><p className="text-xs text-slate-500 mt-1">Estimated for {foodDraft.food_description}</p></div>
-                          <span className={`text-[10px] uppercase tracking-wide rounded-full px-2 py-1 ${foodDraft.source === 'database' ? 'bg-emerald-50 text-emerald-700' : foodDraft.source === 'user-edited' ? 'bg-sky-50 text-sky-700' : 'bg-amber-50 text-amber-700'}`}>{foodDraft.source === 'database' ? 'Local catalog' : foodDraft.source === 'user-edited' ? 'Edited by you' : 'AI estimate'}</span>
-                        </div>
-                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-                          {['calories', 'protein', 'carbs', 'fats', 'fiber'].map((key) => (
-                            <label key={key} className="text-[10px] uppercase tracking-wide text-slate-500 font-bold">{key === 'calories' ? 'kcal' : `${key} (g)`}
-                              <input type="number" min="0" step="0.1" value={foodDraft[key]} onChange={e => setFoodDrafts(previous => previous.map((item, index) => index === draftIndex ? { ...item, [key]: e.target.value, source: 'user-edited', food_item_id: null } : item))} className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-sm text-slate-800 outline-none focus:border-green-400" />
-                            </label>
-                          ))}
-                        </div>
-                        <p className="mt-3 text-xs text-slate-500">{foodDraft.source === 'database' ? 'Scaled from your local food catalog serving; edit any value if needed.' : foodDraft.source === 'user-edited' ? 'You changed this estimate. The saved entry will be marked as user-edited.' : 'AI estimate for the described portion. Review and adjust before saving.'}</p>
-                        <div className="flex justify-end gap-2 mt-4">
-                          <button onClick={() => setFoodDrafts(previous => previous.filter((_, index) => index !== draftIndex))} className="px-4 py-2 rounded-full text-xs font-bold text-slate-500 hover:bg-slate-50">Remove draft</button>
-                          <button onClick={() => saveFoodDraft(draftIndex)} disabled={loading} className="px-5 py-2 rounded-full bg-green-600 text-white text-xs font-bold hover:bg-green-700 disabled:opacity-60">{loading ? 'Saving…' : 'Confirm & save separately'}</button>
-                        </div>
-                      </div>
-                    ))}
+              <div className="food-log-layout">
+                {foodEntryMode === 'describe' && (
+                <section className="food-assistant-card" aria-label="Describe and review food">
+                  <div className="food-composer-section food-composer-section-first">
+                    <label htmlFor="food-log-message">What did you eat?</label>
+                    <div className="food-composer">
+                      <textarea id="food-log-message" value={input} onChange={e => handleInputChange(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitFoodMessage(); } }} placeholder="e.g. 2 chapati and a small bowl of dal" rows={2} />
+                      <button type="button" onClick={submitFoodMessage} disabled={foodThinking || loading} className="food-submit-button btn btn-food">{foodThinking ? <><i className="w-4 h-4 rounded-full border-2 border-current/30 border-t-current animate-spin" /> Checking…</> : <><Sparkles size={17} /> Review nutrition</>}</button>
+                    </div>
+                    <p className="food-composer-hint">Add one food or a whole meal. You can adjust the nutrition before saving.</p>
+                    {isParsing && <p className="food-parsing-hint" role="status">Understanding your message…</p>}
                     <AnimatePresence>
                       {aiChips.length > 0 && (
-                        <motion.div 
-                          initial={{ opacity: 0, y: 10 }} 
-                          animate={{ opacity: 1, y: 0 }} 
-                          className="flex flex-wrap justify-center gap-2"
-                        >
-                          {aiChips.map((chip, i) => (
-                            <motion.div 
-                              key={i} 
-                              initial={{ scale: 0 }} 
-                              animate={{ scale: 1 }} 
-                              className="bg-white px-4 py-1.5 rounded-full border border-green-200 text-green-700 text-xs font-bold shadow-sm"
-                            >
-                              ✨ {chip.quantity} {chip.item}
-                            </motion.div>
-                          ))}
+                        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }} className="food-understanding-chips" aria-label="Foods understood so far">
+                          <span>Understood:</span>{aiChips.map((chip, i) => <span key={i} className="food-understanding-chip"><Check size={12} /> {chip.quantity} {chip.item}</span>)}
                         </motion.div>
                       )}
                     </AnimatePresence>
+                  </div>
 
-                    <div className="bg-white rounded-full p-2 shadow-xl border border-slate-100 flex items-center gap-2 w-full max-w-xl">
-                      <input 
-                        value={input} 
-                        onChange={e => handleInputChange(e.target.value)}
-                        onKeyPress={e => e.key === 'Enter' && submitFoodMessage()}
-                        placeholder="e.g. 2 chapati, one mini idli, and a small bowl of dal"
-                        className="flex-1 bg-transparent px-4 py-3 text-sm outline-none"
-                      />
-                      <div className="relative">
-                        {isParsing && (
-                          <div className="absolute -left-6 top-1/2 -translate-y-1/2 w-3 h-3 bg-green-400 rounded-full animate-ping" />
-                        )}
-                        <button 
-                          onClick={submitFoodMessage} 
-                          disabled={foodThinking || loading}
-                          className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold transition-all ${loading ? 'bg-slate-300' : 'bg-green-500 hover:bg-green-600 shadow-lg shadow-green-200'}`}
-                        >
-                          {foodThinking ? <i className="w-5 h-5 rounded-full border-2 border-white/40 border-t-white animate-spin" aria-label="Thinking"/> : '↑'}
-                        </button>
-                      </div>
+                  {foodMessages.length > 0 && (
+                    <div className="food-chat-window" aria-label="Food assistant conversation" aria-live="polite">
+                      {foodMessages.map((message, index) => (
+                        <div key={index} className={`food-chat-row ${message.role === 'user' ? 'is-user' : 'is-assistant'}`}>
+                          {message.role !== 'user' && <span className="food-chat-avatar"><Sparkles size={14} /></span>}
+                          <p className="food-chat-bubble">{message.text}</p>
+                        </div>
+                      ))}
+                      {foodThinking && <div className="food-thinking-message" role="status" aria-live="polite"><i className="w-4 h-4 shrink-0 rounded-full border-2 border-emerald-300/25 border-t-emerald-300 animate-spin"/><span>Checking your foods and portions…</span></div>}
                     </div>
-                  </div>
-                </div>
+                  )}
 
-                <div className="space-y-6">
-                  <div className="flex items-center gap-2 text-slate-800">
-                    <Search size={21} strokeWidth={1.8} />
-                    <span className="text-sm font-bold uppercase tracking-widest">Nutrition Database</span>
-                  </div>
+                  {foodDrafts.map((foodDraft, draftIndex) => {
+                    const nutrientLabels = { calories: ['Calories', 'kcal'], protein: ['Protein', 'g'], carbs: ['Carbs', 'g'], fats: ['Fat', 'g'], fiber: ['Fibre', 'g'] };
+                    return (
+                      <article key={`${foodDraft.food_description}-${draftIndex}`} className="food-draft-card">
+                        <div className="food-draft-heading">
+                          <span className="food-draft-icon"><Check size={19} /></span>
+                          <div className="food-draft-title"><p>{foodDrafts.length > 1 ? `FOOD ${draftIndex + 1} OF ${foodDrafts.length}` : 'READY TO REVIEW'}</p><h4>{foodDraft.food_description}</h4><span>Check the estimate, then add it to your meal.</span></div>
+                          <span className={`food-source-badge ${foodDraft.source === 'database' ? 'is-catalog' : foodDraft.source === 'user-edited' ? 'is-edited' : 'is-ai'}`}>{foodDraft.source === 'database' ? 'Catalog' : foodDraft.source === 'user-edited' ? 'Your edit' : 'AI estimate'}</span>
+                        </div>
+                        <div className="food-nutrition-section-title"><strong>Nutrition for this portion</strong><span>Tap a value to change it</span></div>
+                        <div className="food-nutrition-grid">
+                          {['calories', 'protein', 'carbs', 'fats', 'fiber'].map(key => (
+                            <label key={key} className={`food-nutrient-field nutrient-${key}`}><span>{nutrientLabels[key][0]}</span><div><input aria-label={`${nutrientLabels[key][0]} in ${nutrientLabels[key][1]}`} type="number" min="0" step="0.1" value={foodDraft[key]} onChange={e => setFoodDrafts(previous => previous.map((item, index) => index === draftIndex ? { ...item, [key]: e.target.value, source: 'user-edited', food_item_id: null } : item))} /><small>{nutrientLabels[key][1]}</small></div></label>
+                          ))}
+                        </div>
+                        <p className="food-estimate-note">{foodDraft.source === 'database' ? 'Estimated from your local food list.' : foodDraft.source === 'user-edited' ? 'Your changes will be saved with this entry.' : 'AI estimate. Adjust it if it doesn’t look right.'}</p>
+                        <div className="food-draft-actions">
+                          <button type="button" onClick={() => setFoodDrafts(previous => previous.filter((_, index) => index !== draftIndex))} className="food-remove-draft">Remove</button>
+                      <button type="button" onClick={() => saveFoodDraft(draftIndex)} disabled={loading} className="food-save-draft btn btn-food">{loading ? 'Saving…' : foodDrafts.length > 1 ? 'Save this food' : `Add to ${selectedMeal}`}</button>
+                        </div>
+                      </article>
+                    );
+                  })}
+
+                  <details className="food-ai-details">
+                    <summary><span><Sparkles size={15} /> AI estimate status</span><span>{ollamaStatusLoading ? 'Checking…' : ollamaStatus?.ollama_running ? 'Available' : 'View status'}</span></summary>
+                    <div className="food-ai-details-body"><AIStatusIndicator status={ollamaStatus} loading={ollamaStatusLoading} onRefresh={refreshOllamaStatus} /></div>
+                  </details>
+                </section>
+                )}
+
+                {foodEntryMode === 'search' && <section className="food-database-panel" aria-labelledby="food-database-title">
+                  <div className="food-database-heading"><span className="food-database-icon"><Search size={19} /></span><h3 id="food-database-title">Search foods</h3></div>
                   <div className="flex flex-wrap gap-2" role="tablist" aria-label="Food lists">
                     {[['search', 'Search'], ['favorites', '★ Favorites'], ['recent', 'Recent']].map(([mode, label]) => (
                       <button key={mode} role="tab" aria-selected={foodListMode === mode}
                         onClick={() => { setFoodListMode(mode); setSelectedFood(null); }}
-                        className={`rounded-full px-4 py-2 text-xs font-bold transition-colors ${foodListMode === mode ? 'bg-emerald-600 text-white shadow-md shadow-emerald-200' : 'bg-white text-slate-500 border border-slate-200 hover:border-emerald-300'}`}>
+                        className={`food-list-tab ${foodListMode === mode ? 'is-active' : ''}`}>
                         {label}
                       </button>
                     ))}
@@ -1713,38 +1796,31 @@ export default function App() {
                       onFocus={() => setFoodListMode('search')}
                       onChange={e => searchFood(e.target.value)}
                       disabled={foodListMode !== 'search'}
-                      placeholder="Search foods: roti, chapati, dahi, kela…"
-                      className="w-full p-4 pl-12 bg-white rounded-2xl border border-slate-100 shadow-sm outline-none text-sm focus:border-green-300 transition-all"
+                      placeholder="Try apple, roti, dal, or dahi…"
+                      aria-label="Search foods in the nutrition list"
+                      className="food-database-search w-full p-4 pl-12 bg-white rounded-2xl border border-slate-100 shadow-sm outline-none text-sm focus:border-green-300 transition-all"
                     />
-                    <span className="absolute left-4 top-4 text-slate-400">{searchLoading ? <i className="block w-4 h-4 rounded-full border-2 border-green-500/30 border-t-green-500 animate-spin"/> : <Search size={17} strokeWidth={1.8} />}</span>
+                    <span className="absolute left-4 top-4 text-slate-400 pointer-events-none">{searchLoading ? <i className="block w-4 h-4 rounded-full border-2 border-green-500/30 border-t-green-500 animate-spin"/> : <Search size={17} strokeWidth={1.8} />}</span>
                   </div>
                   <div className="max-h-[400px] overflow-y-auto space-y-3 pr-2">
                     {(searchLoading || foodCollectionsLoading) && <div className="flex items-center justify-center gap-3 text-slate-400 text-sm py-10"><i className="w-4 h-4 rounded-full border-2 border-green-500/30 border-t-green-500 animate-spin"/>{searchLoading ? 'Searching nutrition database…' : 'Loading your food lists…'}</div>}
                     {!searchLoading && !foodCollectionsLoading && foodRows.length === 0 && (
-                      <div className="text-center text-slate-400 text-sm py-10">
-                        {foodListMode === 'search' && searchQuery.length >= 2 ? 'No foods found. Try another name or log the food manually.' : foodListMode === 'favorites' ? 'Your favorite foods will show up here. Tap the star on a food to save it.' : foodListMode === 'recent' ? 'Foods you choose from the catalog will appear here after you log them.' : 'Search for a food, or choose Favorites or Recent.'}
+                      <div className="food-database-empty">
+                        <Search size={22} />
+                        <p>{foodListMode === 'search' && searchQuery.length >= 2 ? 'No matching foods yet' : foodListMode === 'favorites' ? 'Your saved foods will appear here' : foodListMode === 'recent' ? 'Foods you add from this list will appear here' : 'Search by food name to get started'}</p>
+                        <span>{foodListMode === 'search' && searchQuery.length >= 2 ? 'Try another name, or use the assistant to log it.' : foodListMode === 'favorites' ? 'Tap the star beside a food to save it here.' : foodListMode === 'recent' ? 'You can also describe your meal in the assistant.' : 'You can also describe your meal in the assistant.'}</span>
                       </div>
                     )}
                     {foodRows.map(food => (
-                      <div 
-                        key={food.id} 
-                        onClick={() => selectFood(food)}
-                        className="p-4 bg-white rounded-2xl border border-slate-100 hover:border-green-300 cursor-pointer transition-all flex justify-between items-center shadow-sm group"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="grid h-8 w-8 place-items-center rounded-lg bg-slate-50 text-rose-300 group-hover:bg-green-50 transition-colors"><Apple size={16} strokeWidth={1.8} /></div>
-                          <div>
-                            <p className="text-sm font-bold text-slate-800">{food.name}</p>
-                            <p className="text-xs text-slate-400">{food.serving_size} · {food.source_version ? `USDA FDC ${food.source_version}` : food.source || 'Local estimate'}</p>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-sm font-bold text-slate-700">{food.calories} kcal</p>
-                          <p className="text-[10px] text-slate-400 uppercase font-bold">P:{food.protein}g C:{food.carbs}g F:{food.fats}g · Fiber:{food.fiber || 0}g</p>
-                        </div>
+                      <div key={food.id} className="food-result-card">
+                        <button type="button" onClick={() => selectFood(food)} className="food-result-main">
+                          <span className="food-result-icon"><Apple size={17} /></span>
+                          <span className="food-result-description"><strong>{food.name}</strong><small>{food.serving_size} · {food.source_version ? `USDA data ${food.source_version}` : food.source || 'Local estimate'}</small></span>
+                          <span className="food-result-calories"><strong>{food.calories}</strong><small>kcal</small></span>
+                        </button>
                         <button type="button" aria-label={favoriteFoods.some(item => item.id === food.id) ? `Remove ${food.name} from favorites` : `Add ${food.name} to favorites`}
                           onClick={event => toggleFoodFavorite(food, event)}
-                          className={`ml-3 rounded-full p-2 text-lg transition-colors ${favoriteFoods.some(item => item.id === food.id) ? 'text-amber-500 hover:bg-amber-50' : 'text-slate-300 hover:bg-amber-50 hover:text-amber-500'}`}>
+                          className={`food-result-favorite ${favoriteFoods.some(item => item.id === food.id) ? 'is-favorite' : ''}`}>
                           {favoriteFoods.some(item => item.id === food.id) ? '★' : '☆'}
                         </button>
                       </div>
@@ -1752,7 +1828,7 @@ export default function App() {
                   </div>
 
                   {selectedFood && (
-                    <div className="glass-card p-5 space-y-4">
+                    <div className="food-selected-card space-y-4">
                       <div className="flex items-start justify-between gap-3">
                         <div><p className="font-bold text-slate-800">{selectedFood.name}</p><p className="text-xs text-slate-500">Values per {selectedFood.serving_size}</p></div>
                         <button aria-label="Cancel food selection" onClick={() => setSelectedFood(null)} className="text-slate-400 px-2"><X size={17} /></button>
@@ -1763,14 +1839,14 @@ export default function App() {
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs text-slate-500">
                         {['calories', 'protein', 'carbs', 'fats', 'fiber'].map(key => <span key={key} className="rounded-xl bg-slate-50 px-3 py-2">{key === 'calories' ? 'Calories' : key}: <b className="text-slate-800">{(Number(selectedFood[key] || 0) * (Number(foodServings) || 0)).toFixed(key === 'calories' ? 0 : 1)}{key === 'calories' ? ' kcal' : ' g'}</b></span>)}
                       </div>
-                      <button onClick={saveSelectedFood} disabled={loading} className="w-full rounded-xl bg-green-500 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">{loading ? 'Adding…' : `Add to ${selectedMeal}`}</button>
+                      <button onClick={saveSelectedFood} disabled={loading} className="btn btn-food w-full rounded-xl px-5 py-3 text-sm font-bold disabled:opacity-60">{loading ? 'Adding…' : `Add to ${selectedMeal}`}</button>
                     </div>
                   )}
 
-                  <div className="glass-card p-5">
+                  <div className="food-manual-entry-card">
                     <div className="flex items-center justify-between gap-3">
-                      <div><p className="font-bold text-slate-800">Food not listed?</p><p className="text-xs text-slate-500 mt-1">Enter the portion and nutrition values yourself.</p></div>
-                      <button onClick={() => setManualEntryOpen(open => !open)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-green-700">{manualEntryOpen ? 'Close' : 'Add manually'}</button>
+                      <div><p className="font-bold text-slate-800">Can’t find your food?</p><p className="text-xs text-slate-500 mt-1">Enter its name, portion, and nutrition values.</p></div>
+                      <button type="button" onClick={() => setManualEntryOpen(open => !open)} className="food-manual-toggle">{manualEntryOpen ? 'Close' : 'Add manually'}</button>
                     </div>
                     {manualEntryOpen && (
                       <div className="mt-5 space-y-3">
@@ -1781,11 +1857,11 @@ export default function App() {
                         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                           {['calories', 'protein', 'carbs', 'fats', 'fiber'].map(key => <label key={key} className="text-[10px] uppercase tracking-wide text-slate-500 font-bold">{key === 'calories' ? 'Calories (kcal)' : `${key} (g)`}<input type="number" min="0" step="0.1" value={manualFood[key]} onChange={e => setManualFood(prev => ({...prev, [key]: e.target.value}))} className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-sm" /></label>)}
                         </div>
-                        <button onClick={saveManualFood} disabled={loading} className="w-full rounded-xl bg-green-500 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">{loading ? 'Saving…' : 'Save manual entry'}</button>
+                        <button onClick={saveManualFood} disabled={loading} className="btn btn-food w-full rounded-xl px-5 py-3 text-sm font-bold disabled:opacity-60">{loading ? 'Saving…' : 'Save manual entry'}</button>
                       </div>
                     )}
                   </div>
-                </div>
+                </section>}
               </div>
             </motion.div>
           ) : (
@@ -1795,132 +1871,128 @@ export default function App() {
               animate={{ opacity: 1, y: 0 }} 
               exit={{ opacity: 0, y: -10 }} 
               transition={{ duration: 0.2 }}
-              className="space-y-10"
+              className={`app-screen screen-${activeTab} space-y-10`}
             >
               {activeTab === 'home' && (
                 <>
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 sm:gap-6 bg-white p-5 sm:p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
-                    <div className="space-y-1">
-                      <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight">Welcome back!</h2>
-                      <p className="text-sm text-slate-500 font-medium">Here's your health snapshot for today.</p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-3">
-                      <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-2xl border border-slate-100">
-                      <button type="button" onClick={() => moveSelectedDate(-1)} aria-label="Previous day" className="p-2 text-slate-400 hover:text-green-600 transition-colors"><ArrowLeft size={17} /></button>
-                      <input 
-                        type="date" 
-                        value={selectedDate} 
-                        max={todayDate}
-                        onChange={e => selectCalendarDate(e.target.value)}
-                        className="home-date-picker text-sm font-bold text-slate-600 bg-transparent outline-none text-center cursor-pointer"
-                      />
-                      <button type="button" onClick={() => moveSelectedDate(1)} disabled={selectedDate >= todayDate} aria-label="Next day" className="p-2 text-slate-400 hover:text-green-600 transition-colors disabled:cursor-not-allowed disabled:opacity-35"><ChevronDown size={17} className="-rotate-90" /></button>
+                  <div className="home-page-heading">
+                    <div className="home-heading-copy"><h2>Your day</h2></div>
+                    <div className="home-toolbar">
+                      <div className="home-date-control">
+                        <button type="button" onClick={() => moveSelectedDate(-1)} aria-label="Previous day" className="home-date-nav-button"><ArrowLeft size={16} /></button>
+                        <input
+                          type="date"
+                          value={selectedDate}
+                          max={todayDate}
+                          onChange={e => selectCalendarDate(e.target.value)}
+                          className="home-date-picker"
+                          aria-label="Selected day"
+                        />
+                        <button type="button" onClick={() => moveSelectedDate(1)} disabled={selectedDate >= todayDate} aria-label="Next day" className="home-date-nav-button"><ChevronDown size={16} className="-rotate-90" /></button>
                       </div>
-                      <button onClick={() => setShowLogPage(true)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-green-500 px-4 py-3 text-sm font-extrabold text-slate-950"><Plus size={17} />Log food</button>
+                      <button onClick={() => openFoodLogger()} className="btn btn-food home-log-food-button"><Plus size={16} />Log food</button>
                     </div>
                   </div>
 
                   <details className="nutrition-accordion glass-card">
                     <summary className="nutrition-accordion-summary">
                       <span className="nutrition-summary-icon"><Flame size={19} strokeWidth={1.8} /></span>
-                      <span className="min-w-0 flex-1"><span className="block text-sm font-extrabold">Nutrition today</span><span className="mt-1 block truncate text-xs text-slate-500">{Math.round(summary.total_calories)} kcal logged{profile?.calorie_target ? ` · ${Math.max(0, Math.round(profile.calorie_target - summary.total_calories))} kcal to target` : ' · set up a profile for a target'}</span></span>
-                      <span className="hidden sm:block text-xs font-semibold text-slate-500">Calories · protein · carbs · fats · fiber</span>
+                      <span className="min-w-0 flex-1"><span className="block text-sm font-extrabold">Nutrition summary</span><span className={`mt-1 block truncate text-xs text-slate-500 ${profile?.calorie_target && summary.total_calories > profile.calorie_target ? 'calorie-over-target' : ''}`}>{Math.round(summary.total_calories)} kcal logged{profile?.calorie_target ? ` · ${summary.total_calories > profile.calorie_target ? `Over by ${Math.round(summary.total_calories - profile.calorie_target)} kcal` : `${Math.max(0, Math.round(profile.calorie_target - summary.total_calories))} kcal left`}` : ' · add a profile to set a target'}</span></span>
+                      <span className="text-xs font-semibold text-slate-500">Tap to see all nutrients</span>
                       <ChevronDown size={19} className="nutrition-chevron" />
                     </summary>
                     <div className="nutrition-accordion-content grid grid-cols-2 md:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-5">
-                      <MacroCard label="Calories" value={summary.total_calories} target={profile?.calorie_target || 2000} unit="kcal" color="bg-[#FF8A65]" icon={Flame} />
-                      <MacroCard label="Protein" value={summary.total_protein} target={profile?.protein_target || 100} unit="g" color="bg-[#34F5C5]" icon={Dumbbell} />
-                      <MacroCard label="Carbs" value={summary.total_carbs} target={profile?.carb_target || 200} unit="g" color="bg-[#38BDF8]" icon={Wheat} />
-                      <MacroCard label="Fats" value={summary.total_fats} target={profile?.fat_target || 60} unit="g" color="bg-[#FBBF24]" icon={Droplets} />
-                      <MacroCard label="Fiber" value={summary.total_fiber} target={28} unit="g" color="bg-[#A78BFA]" icon={Sprout} />
+                      <MacroCard label="Calories" value={summary.total_calories} target={profile?.calorie_target || 2000} unit="kcal" color="var(--d-calories)" icon={Flame} />
+                      <MacroCard label="Protein" value={summary.total_protein} target={profile?.protein_target || 100} unit="g" color="var(--d-protein)" icon={Dumbbell} />
+                      <MacroCard label="Carbs" value={summary.total_carbs} target={profile?.carb_target || 200} unit="g" color="var(--d-carbs)" icon={Wheat} />
+                      <MacroCard label="Fats" value={summary.total_fats} target={profile?.fat_target || 60} unit="g" color="var(--d-fat)" icon={Droplets} />
+                      <MacroCard label="Fiber" value={summary.total_fiber} target={28} unit="g" color="var(--d-fiber)" icon={Sprout} />
                     </div>
                   </details>
 
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <section className="glass-card min-w-0 p-6 space-y-4">
-                      <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-widest text-slate-500">Hydration</p><p className="text-3xl font-extrabold mt-2">{(tracking.water_total_ml / 1000).toFixed(2)}<span className="text-sm text-slate-400 ml-2">L on selected day</span></p></div><Droplets size={26} className="text-cyan-300" strokeWidth={1.7} /></div>
-                      <div className="flex flex-wrap gap-2">{[150, 250, 500].map(amount => <button key={amount} onClick={() => addWater(amount)} className="glass-chip px-4 py-2 text-sm font-bold text-cyan-200">+{amount} ml</button>)}</div>
-                      <div className="flex gap-2"><input aria-label="Custom water amount in milliliters" type="number" min="1" value={waterAmount} onChange={e => setWaterAmount(e.target.value)} className="min-w-0 flex-1 rounded-xl border px-3 py-2"/><button onClick={() => addWater()} className="rounded-xl bg-green-500 px-4 py-2 text-sm font-bold">Log water</button></div>
-                      <DailyTrackingEntries
-                        kind="water" entries={tracking.water_logs}
-                        editingId={editingWaterLogId} editValue={waterEditValue} setEditValue={setWaterEditValue}
-                        onStartEdit={entry => { setEditingWaterLogId(entry.id); setWaterEditValue(String(entry.amount_ml)); }}
-                        onCancelEdit={() => setEditingWaterLogId(null)} onSaveEdit={saveWaterEdit}
-                      />
-                    </section>
-                    <section className="glass-card min-w-0 p-6 space-y-4">
-                      <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-widest text-slate-500">Weight</p><p className="text-3xl font-extrabold mt-2">{tracking.latest_weight_kg ? `${tracking.latest_weight_kg.toFixed(1)}` : '—'}<span className="text-sm text-slate-400 ml-2">kg latest on selected date</span></p></div><Scale size={26} className="text-violet-300" strokeWidth={1.7} /></div>
-                      <div className="flex gap-2"><input aria-label="Weight in kilograms" type="number" min="1" max="700" step="0.1" placeholder="Weight in kg" value={weightInput} onChange={e => setWeightInput(e.target.value)} className="min-w-0 flex-1 rounded-xl border px-3 py-2"/><button onClick={addWeight} className="rounded-xl bg-green-500 px-4 py-2 text-sm font-bold">Save weight</button></div>
-                      <p className="text-xs text-slate-500">{tracking.weight_logs.length} weigh-in{tracking.weight_logs.length === 1 ? '' : 's'} recorded for this day.</p>
-                      <DailyTrackingEntries
-                        kind="weight" entries={tracking.weight_logs}
-                        editingId={editingWeightLogId} editValue={weightEditValue} setEditValue={setWeightEditValue}
-                        onStartEdit={entry => { setEditingWeightLogId(entry.id); setWeightEditValue(String(entry.weight_kg)); }}
-                        onCancelEdit={() => setEditingWeightLogId(null)} onSaveEdit={saveWeightEdit}
-                      />
-                    </section>
+                  <div className="tracking-accordion-list">
+                    <details className="tracking-accordion glass-card">
+                      <summary className="tracking-accordion-summary">
+                        <span className="tracking-summary-icon is-water"><Droplets size={19} /></span>
+                        <span className="tracking-summary-copy"><strong>Hydration</strong><span>{(tracking.water_total_ml / 1000).toFixed(2)} L · {tracking.water_logs.length} {tracking.water_logs.length === 1 ? 'entry' : 'entries'}</span></span>
+                        <Plus size={20} className="tracking-plus" aria-hidden="true" />
+                      </summary>
+                      <div className="tracking-accordion-content">
+                        <div className="flex flex-wrap gap-2">{[150, 250, 500].map(amount => <button key={amount} onClick={() => addWater(amount)} className="glass-chip px-4 py-2 text-sm font-bold text-cyan-200">+{amount} ml</button>)}</div>
+                        <div className="flex gap-2"><input aria-label="Custom water amount in milliliters" type="number" min="1" value={waterAmount} onChange={e => setWaterAmount(e.target.value)} className="min-w-0 flex-1 rounded-xl border px-3 py-2"/><button onClick={() => addWater()} className="btn btn-secondary rounded-xl px-4 py-2 text-sm font-bold">Log water</button></div>
+                        <DailyTrackingEntries
+                          kind="water" entries={tracking.water_logs}
+                          editingId={editingWaterLogId} editValue={waterEditValue} setEditValue={setWaterEditValue}
+                          onStartEdit={entry => { setEditingWaterLogId(entry.id); setWaterEditValue(String(entry.amount_ml)); }}
+                          onCancelEdit={() => setEditingWaterLogId(null)} onSaveEdit={saveWaterEdit} onDelete={deleteWaterLog}
+                        />
+                      </div>
+                    </details>
+                    <details ref={weightAccordionRef} className="tracking-accordion glass-card">
+                      <summary className="tracking-accordion-summary">
+                        <span className="tracking-summary-icon is-weight"><Scale size={19} /></span>
+                        <span className="tracking-summary-copy"><strong>Weight</strong><span>{tracking.latest_weight_kg ? `${tracking.latest_weight_kg.toFixed(1)} kg · ${tracking.weight_logs.length} weigh-in${tracking.weight_logs.length === 1 ? '' : 's'}` : 'No weigh-in for this day'}</span></span>
+                        <Plus size={20} className="tracking-plus" aria-hidden="true" />
+                      </summary>
+                      <div className="tracking-accordion-content">
+                        <div className="flex gap-2"><input id="home-weight-input" aria-label="Weight in kilograms" type="number" min="1" max="700" step="0.1" placeholder="Weight in kg" value={weightInput} onChange={e => setWeightInput(e.target.value)} className="min-w-0 flex-1 rounded-xl border px-3 py-2"/><button onClick={addWeight} className="btn btn-secondary rounded-xl px-4 py-2 text-sm font-bold">Save weight</button></div>
+                        <DailyTrackingEntries
+                          kind="weight" entries={tracking.weight_logs}
+                          editingId={editingWeightLogId} editValue={weightEditValue} setEditValue={setWeightEditValue}
+                          onStartEdit={entry => { setEditingWeightLogId(entry.id); setWeightEditValue(String(entry.weight_kg)); }}
+                          onCancelEdit={() => setEditingWeightLogId(null)} onSaveEdit={saveWeightEdit}
+                        />
+                      </div>
+                    </details>
                   </div>
 
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
                     <div className="lg:col-span-2 space-y-6">
-                      <div className="flex items-center justify-between mb-4">
-                        <h3 className="text-xl font-bold text-slate-800 tracking-tight">Daily Activity Log</h3>
-                        <button 
-                          onClick={() => setShowLogPage(true)}
-                          className="bg-green-500 text-white px-6 py-3 rounded-full font-bold shadow-lg shadow-green-200 hover:bg-green-600 transition-all flex items-center gap-2 text-sm hover:scale-105 active:scale-95"
-                        >
-                          <Plus size={18} /> Log Food
-                        </button>
+                      <div className="food-day-heading">
+                        <div><h3>Food for the day</h3><p>{foodLogs.length} {foodLogs.length === 1 ? 'entry' : 'entries'} · open a meal to see its foods</p></div>
                       </div>
-
-                      {Object.keys(summary.by_meal || {}).length > 0 && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
-                          {Object.entries(summary.by_meal).map(([meal, totals]) => (
-                            <div key={meal} className="glass-card px-5 py-4">
-                              <div className="flex items-center justify-between gap-2">
-                                <p className="text-sm font-bold text-slate-800">{meal}</p>
-                                <p className="text-sm font-extrabold text-[#FF8A65]">{Math.round(totals.calories)} kcal</p>
-                              </div>
-                              <p className="text-[11px] text-slate-500 mt-2">Protein {totals.protein.toFixed(1)}g · Carbs {totals.carbs.toFixed(1)}g · Fat {totals.fats.toFixed(1)}g · Fiber {totals.fiber.toFixed(1)}g</p>
+                      <div className="meal-log-list">
+                        {mealLogOrder.map(meal => {
+                          const entries = foodLogsByMeal[meal] || [];
+                          const totals = entries.reduce((sum, log) => ({
+                            calories: sum.calories + Number(log.calories || 0),
+                            protein: sum.protein + Number(log.protein || 0),
+                            carbs: sum.carbs + Number(log.carbs || 0),
+                            fats: sum.fats + Number(log.fats || 0),
+                            fiber: sum.fiber + Number(log.fiber || 0),
+                          }), { calories: 0, protein: 0, carbs: 0, fats: 0, fiber: 0 });
+                          return <details key={meal} className="meal-log-accordion glass-card">
+                            <summary className="meal-log-summary">
+                              <span className="meal-log-icon"><Activity size={17} /></span>
+                              <span className="meal-log-title">{meal}</span>
+                              <span className="meal-log-count">{entries.length} {entries.length === 1 ? 'food' : 'foods'}</span>
+                              <strong className="meal-log-calories">{Math.round(totals.calories)} kcal</strong>
+                              <Plus size={19} className="meal-log-plus" aria-hidden="true" />
+                            </summary>
+                            <div className="meal-log-content">
+                              {entries.length ? <>
+                                <p className="meal-log-macros">Protein {totals.protein.toFixed(1)} g · Carbs {totals.carbs.toFixed(1)} g · Fat {totals.fats.toFixed(1)} g · Fiber {totals.fiber.toFixed(1)} g</p>
+                                {entries.map(log => <motion.div key={log.id} layout className="meal-log-item">
+                                  <div className="meal-log-item-copy">
+                                    <strong>{log.note || log.category}</strong>
+                                    <span>{formatTrackingTime(log.timestamp)} · {log.source || 'Food log'}</span>
+                                    <small>P {Number(log.protein || 0).toFixed(1)} g · C {Number(log.carbs || 0).toFixed(1)} g · F {Number(log.fats || 0).toFixed(1)} g · Fiber {Number(log.fiber || 0).toFixed(1)} g</small>
+                                  </div>
+                                  <div className="meal-log-item-actions"><strong>{Math.round(Number(log.calories || 0))} kcal</strong><button type="button" aria-label={`Delete ${log.note || log.category}`} onClick={() => deleteLog(log.id)}><Trash2 size={16} /></button></div>
+                                </motion.div>)}
+                              </> : <div className="meal-log-empty"><span>No food logged for {meal.toLowerCase()} yet.</span><button type="button" onClick={() => openFoodLogger(meal)}><Plus size={15} />Add food</button></div>}
                             </div>
-                          ))}
-                        </div>
-                      )}
-                      
-                      <div className="space-y-4">
-                        {logs.length === 0 ? (
-                          <div className="bg-white p-16 rounded-[2.5rem] text-center border border-slate-100 text-slate-400 shadow-sm">
-                            <Salad size={44} className="mx-auto mb-5 text-emerald-300" strokeWidth={1.5} />
-                            <p className="text-lg font-medium mb-2">No logs for this date.</p>
-                            <p className="text-sm opacity-70">Time to fuel up your body!</p>
-                          </div>
-                        ) : (
-                          logs.map(log => (
-                            <motion.div key={log.id} layout className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 flex items-center justify-between hover:border-green-200 transition-all group">
-                              <div className="flex items-center gap-4">
-                                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-slate-50 text-slate-400 group-hover:bg-green-50 transition-colors"><Activity size={19} strokeWidth={1.8} /></div>
-                                <div>
-                                  <p className="text-sm font-bold text-slate-800">{log.note || log.category}</p>
-                                  <p className="text-[11px] text-slate-400 font-medium">{new Date(log.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} • {log.source}</p>
-                                  {log.category === 'nutrition' && <p className="text-[11px] text-slate-500 mt-1">P {Number(log.protein || 0).toFixed(1)}g · C {Number(log.carbs || 0).toFixed(1)}g · F {Number(log.fats || 0).toFixed(1)}g · Fiber {Number(log.fiber || 0).toFixed(1)}g</p>}
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-6">
-                                {log.calories > 0 && <span className="text-sm font-extrabold text-slate-700">{log.calories} kcal</span>}
-                                <button aria-label={`Delete ${log.note || log.category}`} onClick={() => deleteLog(log.id)} className="text-slate-300 hover:text-red-400 transition-colors"><X size={17} /></button>
-                              </div>
-                            </motion.div>
-                          ))
-                        )}
+                          </details>;
+                        })}
                       </div>
                     </div>
 
                     <div className="space-y-6">
                       <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-6">
-                        <h3 className="text-sm font-bold text-slate-800 uppercase tracking-widest">Quick Insights</h3>
+                        <h3 className="text-sm font-bold text-slate-800 uppercase tracking-widest">Your calorie goal</h3>
                         <div className="p-5 bg-slate-50 rounded-3xl border border-slate-100">
                           <p className="text-sm text-slate-500 leading-relaxed font-medium">
-                            {profile ? `You are currently targeting ${profile.calorie_target?.toFixed(0)} kcal for your ${profile.goal} goal.` : "Setup your profile to see AI insights."}
+                            {profile ? `Your daily target is ${profile.calorie_target?.toFixed(0)} kcal to support your ${profile.goal} goal.` : "Add your age, height, weight and goal in Profile to calculate a daily target."}
                           </p>
                         </div>
                         <button onClick={() => setActiveTab('coach')} className="w-full py-4 bg-slate-900 text-white rounded-2xl text-sm font-bold hover:bg-slate-800 transition-all shadow-xl shadow-slate-200">
@@ -1954,11 +2026,12 @@ export default function App() {
 
               {activeTab === 'coach' && (
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="coach-page max-w-3xl mx-auto flex flex-col">
+                  <div className="coach-page-heading section-heading mb-4 px-4"><p>AI COACH</p><h2>Ask your coach</h2></div>
                   <div className="mb-3 px-4"><AIStatusIndicator status={ollamaStatus} loading={ollamaStatusLoading} onRefresh={refreshOllamaStatus} /></div>
                   <div className="flex-1 overflow-y-auto space-y-4 mb-6 px-4">
                     {chatMessages.map((msg, i) => (
                       <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[80%] p-4 rounded-2xl text-sm ${msg.role === 'user' ? 'bg-green-500 text-white rounded-tr-none shadow-md' : msg.role === 'error' ? 'bg-rose-500/10 border border-rose-400/20 text-rose-200 rounded-tl-none' : 'bg-white border border-slate-100 text-slate-800 rounded-tl-none shadow-sm'}`}>
+                        <div className={`max-w-[80%] p-4 rounded-2xl text-sm ${msg.role === 'user' ? 'coach-user-message text-white rounded-tr-none shadow-md' : msg.role === 'error' ? 'bg-rose-500/10 border border-rose-400/20 text-rose-200 rounded-tl-none' : 'bg-white border border-slate-100 text-slate-800 rounded-tl-none shadow-sm'}`}>
                           {msg.role === 'error' && <strong className="mb-1 block text-[10px] uppercase tracking-wider">AI connection issue</strong>}
                           {msg.text}
                         </div>
@@ -1975,13 +2048,13 @@ export default function App() {
                       placeholder="Ask your coach about nutrition or training..." 
                       className="coach-composer-input flex-1 bg-transparent px-4 py-2 text-sm outline-none"
                     />
-                    {chatLoading ? <button onClick={stopChat} aria-label="Stop AI response" className="shrink-0 px-5 h-12 rounded-full bg-rose-500 text-white text-sm font-bold hover:bg-rose-600 transition-colors shadow-lg shadow-rose-200">■ Stop</button> : <button onClick={handleChat} disabled={!chatInput.trim()} aria-label="Send message" className="bg-green-500 text-white w-12 h-12 rounded-full flex items-center justify-center font-bold hover:bg-green-600 transition-all shadow-lg shadow-green-200 disabled:opacity-40 disabled:shadow-none">↑</button>}
+                    {chatLoading ? <button onClick={stopChat} aria-label="Stop AI response" className="btn btn-danger shrink-0 px-5 h-12 rounded-full text-sm font-bold">■ Stop</button> : <button onClick={handleChat} disabled={!chatInput.trim()} aria-label="Send message" className="btn btn-coach text-white w-12 h-12 rounded-full flex items-center justify-center font-bold disabled:opacity-40 disabled:shadow-none">↑</button>}
                   </div>
                 </motion.div>
               )}
 
               {activeTab === 'train' && (
-                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="max-w-6xl mx-auto space-y-8">
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="train-page max-w-6xl mx-auto space-y-8">
                   <div className="flex flex-wrap gap-2 rounded-2xl bg-white p-2 border border-slate-100 shadow-sm" role="tablist" aria-label="Workout sections">
                     {[["map", "Muscle map"], ["planner", "AI planner"], ["library", "Exercise library"], ["history", "History"]].map(([view, label]) => (
                       <button key={view} role="tab" aria-selected={trainView === view} onClick={() => setTrainView(view)}
@@ -2028,7 +2101,7 @@ export default function App() {
                           <input type="number" min="10" max="180" value={workoutPrefs.duration} onChange={e => setWorkoutPrefs({...workoutPrefs, duration: e.target.value})} className="mt-2 w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 outline-none text-sm text-slate-800" />
                         </label>
                       </div>
-                      <button onClick={generateWorkout} disabled={workoutLoading} className="px-10 py-4 bg-green-500 text-white rounded-full font-extrabold shadow-xl shadow-green-200 hover:bg-green-600 transition-all disabled:bg-slate-300">
+                      <button onClick={generateWorkout} disabled={workoutLoading} className="btn btn-workout px-10 py-4 rounded-full font-extrabold transition-all disabled:opacity-60">
                         {workoutLoading ? <span className="inline-flex items-center gap-3"><i className="w-5 h-5 rounded-full border-2 border-white/40 border-t-white animate-spin"/>Building your plan…</span> : 'Generate AI plan'}
                       </button>
                       <p className="text-xs text-slate-400">Plans use exercises from your local library. Use a comfortable range and stop if you feel pain.</p>
@@ -2077,7 +2150,7 @@ export default function App() {
                             {planExerciseOptions.filter(candidate => !workoutPlan.exercises.some(planned => planned.exercise_id === candidate.id)).map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.name} · {candidate.equipment === 'None' ? 'Bodyweight' : candidate.equipment}</option>)}
                           </select><button type="button" onClick={addPlanExercise} disabled={!newPlanExerciseId}><Plus size={16} />Add exercise</button></div>
                         </div>}
-                        {!activeWorkout ? <button onClick={() => startWorkout(workoutPlan)} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-extrabold shadow-lg hover:bg-slate-800">Start workout</button> : <p className="text-center text-sm font-bold text-emerald-700">A workout session is already in progress.</p>}
+                        {!activeWorkout ? <button onClick={() => startWorkout(workoutPlan)} className="btn btn-workout w-full py-4 rounded-2xl font-extrabold shadow-lg">Start workout</button> : <p className="text-center text-sm font-bold text-emerald-700">A workout session is already in progress.</p>}
                       </section>
                     )}
 
@@ -2111,7 +2184,7 @@ export default function App() {
                             </article>
                           ))}
                         </div>
-                        <div className="flex flex-col sm:flex-row gap-3"><button onClick={completeWorkout} disabled={workoutSaving} className="flex-1 rounded-xl bg-emerald-600 px-5 py-4 text-sm font-extrabold text-white disabled:opacity-60">{workoutSaving ? 'Saving workout…' : 'Complete and save'}</button><button onClick={discardWorkout} disabled={workoutSaving} className="rounded-xl border border-slate-200 px-5 py-4 text-sm font-bold text-slate-500 disabled:opacity-60">Discard session</button></div>
+                        <div className="flex flex-col sm:flex-row gap-3"><button onClick={completeWorkout} disabled={workoutSaving} className="btn btn-workout flex-1 rounded-xl px-5 py-4 font-extrabold disabled:opacity-60">{workoutSaving ? 'Saving workout…' : 'Complete and save'}</button><button onClick={discardWorkout} disabled={workoutSaving} className="btn btn-secondary rounded-xl px-5 py-4 font-bold disabled:opacity-60">Discard session</button></div>
                       </section>
                     )}
                   </>}
@@ -2148,15 +2221,36 @@ export default function App() {
         </AnimatePresence>
       </main>
 
+      {!showLogPage && <>
+        <AnimatePresence>
+          {quickAddOpen && <motion.div className="quick-add-menu" role="menu" aria-label="Quick actions" initial={{ opacity: 0, y: 10, scale: .97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: .98 }}>
+            <p className="quick-add-title">Quick add</p>
+            {[
+              { id: 'food', label: 'Log a meal', detail: 'AI or manual entry', Icon: Apple, color: 'var(--c-food)' },
+              { id: 'water', label: 'Log water', detail: 'Add 250 ml for the selected day', Icon: Droplets, color: 'var(--d-water)' },
+              { id: 'weight', label: 'Log weight', detail: 'Enter a weigh-in for this day', Icon: Scale, color: 'var(--d-weight)' },
+              { id: 'workout', label: 'Plan a workout', detail: 'Open the workout planner', Icon: Dumbbell, color: 'var(--c-workout)' },
+              { id: 'mood', label: 'Mood check-in', detail: 'Talk it through with Coach', Icon: MessageCircle, color: 'var(--c-coach)' },
+            ].map(({ id, label, detail, Icon, color }) => <button key={id} type="button" role="menuitem" onClick={() => runQuickAction(id)} className="quick-add-item" style={{ '--quick-color': color }}>
+              <span className="quick-add-item-icon"><Icon size={19} aria-hidden="true" /></span><span><strong>{label}</strong><small>{detail}</small></span><span className="quick-add-chevron">›</span>
+            </button>)}
+          </motion.div>}
+        </AnimatePresence>
+        <button type="button" className="fab-add-button" aria-label="Log a meal; press and hold for quick actions" aria-expanded={quickAddOpen} title="Log a meal · hold for quick actions" onPointerDown={startFabLongPress} onPointerUp={endFabLongPress} onPointerLeave={endFabLongPress} onPointerCancel={() => { endFabLongPress(); fabLongPressedRef.current = false; }} onContextMenu={event => event.preventDefault()} onClick={openQuickAddDefault}>
+          <Plus size={27} strokeWidth={2.5} aria-hidden="true" />
+        </button>
+      </>}
+
       <nav aria-label="Main sections" className="app-tab-nav fixed bottom-0 left-0 right-0 z-30 flex justify-center">
         <div className="tab-icon-bar">
-          {APP_TABS.map(({ id, Icon, label }) => (
+          {APP_TABS.map(({ id, Icon, label, color }) => (
             <button
               key={id}
               type="button"
               aria-current={activeTab === id ? 'page' : undefined}
-              onClick={() => { setActiveTab(id); setShowLogPage(false); }}
-              className={`tab-icon-button flex flex-col items-center justify-center gap-1 rounded-2xl transition-all ${activeTab === id ? 'is-active text-green-600 bg-green-50 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+              onClick={() => { setActiveTab(id); setShowLogPage(false); setQuickAddOpen(false); }}
+              style={{ '--tab-color': color }}
+              className={`tab-icon-button flex flex-col items-center justify-center gap-1 rounded-2xl transition-all ${activeTab === id ? 'is-active' : ''}`}
             >
               <Icon size={21} strokeWidth={activeTab === id ? 2.2 : 1.8} />
               <span>{label}</span>

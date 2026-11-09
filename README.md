@@ -56,8 +56,11 @@ Still planned or incomplete:
   export, and Mac auto-start configuration.
 - Core backend regression checks are added; automated browser regression
   coverage remains planned.
-- Fitbit and Pixel Watch data sync through the Google Health API (final planned
-  integration phase; not implemented yet).
+- Fitbit and Pixel Watch data sync through the Google Health API (Phase 8; not
+  implemented yet).
+- After wearable integration, improve conversational food logging with
+  context-aware parsing, local nutrition and recipe retrieval, and deterministic
+  portion calculations. This later phase is not implemented yet.
 
 ### Profile estimates and weekly activity plan
 
@@ -77,25 +80,33 @@ the [CDC](https://www.cdc.gov/physical-activity-basics/guidelines/adults.html).
 The energy equation originates in the [Mifflin–St Jeor study](https://pubmed.ncbi.nlm.nih.gov/2305711/);
 individual energy needs can differ from equation estimates.
 
-### Final planned phase: Google Health API / Fitbit sync
+### Phase 8: Fitbit Versa 4 / Google Health API sync
 
-Use Google's current **Google Health API**, the successor to the Fitbit Web
-API, to let the user explicitly connect a Google account and import selected
-Fitbit data. The first release should focus on daily steps, activity/workout
-summaries, heart-rate summaries, sleep, and weight where available. The user
-must be able to choose which data is synced, see the last sync time, retry or
-disconnect, and delete imported records. Keep credentials out of source
-control, store refresh tokens securely on the Mac, and keep imported records in
-the local database. Do not send wearable history to an AI model by default.
+Connect the user's Fitbit Versa 4 through Google's **Google Health API** and
+Google OAuth. After the watch syncs to the Fitbit app, LocalHealthPro can import
+daily steps, sleep sessions, and recorded exercise sessions; heart-rate data
+can be added where available and authorized. Google lists Versa 4 as compatible
+with the steps, sleep, and exercise data types. The workout feed can include
+sessions recorded by the watch; it should not assume every exercise is
+automatically recognized or recorded.
+
+This is not a direct Bluetooth connection from the watch to the Mac: the
+Fitbit app syncs the watch data to Google's service, and LocalHealthPro reads
+the selected data after the user connects their Google account. The app should
+show the last sync time, provide retry and disconnect controls, and let the
+user delete imported records. Keep OAuth credentials out of source control,
+store refresh tokens securely on the Mac, and keep imported records in the
+local database. Do not send wearable history to an AI model by default.
 
 Implementation depends on registering a Google Cloud project, enabling the
-Google Health API, configuring OAuth consent and redirect URIs, and confirming
-the API's currently available data types and access requirements. Use Google's
-[setup guide](https://developers.google.com/health/setup), [data access and
-authorization guide](https://developers.google.com/health/migration/data-access),
-and [API data types](https://developers.google.com/health/data-types) when this
-phase begins. This is a cloud OAuth/data connection, while the app's database
-and day-to-day processing can remain on the Mac.
+Google Health API, configuring OAuth consent and redirect URIs, and meeting
+Google's current access requirements. Use Google's [setup guide](https://developers.google.com/health/setup),
+[data access and authorization guide](https://developers.google.com/health/migration/data-access),
+[API data types](https://developers.google.com/health/data-types), and
+[workout data guide](https://developers.google.com/health/data-types/workouts)
+when this phase begins. The watch-to-cloud sync requires the Fitbit app and
+internet access; LocalHealthPro's database and day-to-day processing can remain
+on the Mac.
 
 Nutrition values in the included food catalog are reference estimates. AI
 nutrition is an estimate too; review it before saving. This app is informational
@@ -223,13 +234,13 @@ Open <http://localhost:5173>. The API health check is at
 
 ## Use from a phone or another device on your home network
 
-1. Find the Mac's current LAN address in macOS Network settings (for example,
-   `192.168.1.20`). Use a reserved DHCP address if your router supports it.
+1. Give the Mac the reserved LAN address `192.168.1.9` in your router or macOS
+   network settings.
 2. Stop the API if it is already running. From the repository root, activate
    the backend environment and set its allowed frontend origin before start:
 
    ```sh
-   LOCALHEALTH_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://192.168.1.20:5173 \
+   LOCALHEALTH_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://192.168.1.9:5173 \
    source backend/.venv/bin/activate
    ```
 
@@ -237,7 +248,7 @@ Open <http://localhost:5173>. The API health check is at
    An easier reliable option is to activate the environment first, then run:
 
    ```sh
-   export LOCALHEALTH_CORS_ORIGINS='http://localhost:5173,http://127.0.0.1:5173,http://192.168.1.20:5173'
+   export LOCALHEALTH_CORS_ORIGINS='http://localhost:5173,http://127.0.0.1:5173,http://192.168.1.9:5173'
    uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
    ```
 
@@ -245,10 +256,10 @@ Open <http://localhost:5173>. The API health check is at
 
    ```sh
    cd frontend
-   VITE_API_BASE_URL=http://192.168.1.20:8000 npm run dev -- --host 0.0.0.0
+   VITE_API_BASE_URL=http://192.168.1.9:8000 npm run dev -- --host 0.0.0.0
    ```
 
-4. On the phone, open `http://192.168.1.20:5173` (replace the sample address).
+4. On the phone, open `http://192.168.1.9:5173`.
    Both devices must be on the same LAN, and the Mac firewall must allow the
    development servers. The browser's origin must match an entry in
    `LOCALHEALTH_CORS_ORIGINS` exactly.
@@ -425,10 +436,16 @@ project database.
    logging are already implemented).
 3. Add workout progression, exercise demonstrations, and more personalized
    accommodations.
-4. Add grounded local nutrition retrieval and guarded Coach actions.
+4. Add guarded AI Coach actions.
 5. Build deeper nutrition/activity insights and reminders.
 6. Add local authentication, backup/export automation, and Mac launch-at-login.
 7. Add PWA/offline support, accessibility polish, and automated regression
    coverage.
-8. Integrate Fitbit and Pixel Watch data through the Google Health API with
-   explicit OAuth consent and local storage.
+8. Integrate Fitbit Versa 4 and Pixel Watch data through the Google Health API:
+   import steps, sleep, and recorded workouts after watch-to-Fitbit-app sync,
+   with explicit OAuth consent and local storage.
+9. After Phase 8, add context-aware conversational nutrition logging: parse
+   natural food descriptions and follow-up answers, retrieve matching foods and
+   recipes from the local catalog, calculate nutrients from sourced records,
+   and ask a brief question or label an estimate when no reliable match exists.
+   Keep the nutrition source and portion assumptions visible to the user.

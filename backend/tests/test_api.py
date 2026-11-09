@@ -5,6 +5,7 @@ import csv
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -73,6 +74,109 @@ class CoreApiRegressionTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 422)
+
+    def test_food_draft_understands_joined_100g_apple_quantity(self):
+        from backend.app.models.models import FoodItem
+
+        db = self.TestSession()
+        db.add(FoodItem(name="Apple", calories=52, protein=0.3, carbs=14,
+                        fats=0.2, fiber=2.4, serving_size="100g"))
+        db.commit()
+        db.close()
+
+        response = self.client.post("/ai/food-draft", json={"text": "one 100gmapple"})
+
+        self.assertEqual(response.status_code, 200)
+        draft = response.json()
+        self.assertEqual(draft["status"], "ready")
+        self.assertEqual(draft["calories"], 52)
+        self.assertIn("100 g Apple", draft["food_description"])
+
+    def test_confirmed_corrected_food_description_replaces_the_typo_context(self):
+        from backend.app.models.models import FoodItem
+
+        db = self.TestSession()
+        db.add(FoodItem(name="Apple", calories=52, protein=0.3, carbs=14,
+                        fats=0.2, fiber=2.4, serving_size="100g"))
+        db.commit()
+        db.close()
+
+        response = self.client.post("/ai/food-draft", json={
+            "text": "yes, one 100 gm apple",
+            "context": "one 100gmapple",
+            "clarification_type": "confirm_food",
+            "previous_question": "Did you mean one apple weighing 100 g?",
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ready")
+        self.assertEqual(response.json()["calories"], 52)
+
+    def test_no_more_food_answer_is_passed_to_ai_as_resolved_context(self):
+        ready_result = {
+            "status": "ready", "question": "", "items": [
+                {"food_description": "one mini gongura biryani", "calories": 360,
+                 "protein": 10, "carbs": 52, "fats": 11, "fiber": 4,
+                 "source": "AI-estimated"}
+            ], "corrections": [],
+        }
+        with patch("backend.app.main.ai_engine.create_food_draft", new_callable=AsyncMock) as create_draft:
+            create_draft.return_value = ready_result
+            response = self.client.post("/ai/food-draft", json={
+                "text": "not yet anything",
+                "context": "one mini gongura biryani with bread halwa and badam milk",
+                "clarification_type": "more_foods",
+                "previous_question": "What else have you eaten?",
+            })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ready")
+        create_draft.assert_awaited_once_with(
+            "one mini gongura biryani with bread halwa and badam milk",
+            clarification_resolution="no_more_food",
+        )
+
+    def test_yes_confirmation_is_passed_to_ai_without_the_yes_as_food_text(self):
+        ready_result = {
+            "status": "ready", "question": "", "items": [
+                {"food_description": "100 g apple", "calories": 52,
+                 "protein": 0.3, "carbs": 14, "fats": 0.2, "fiber": 2.4,
+                 "source": "AI-estimated"}
+            ], "corrections": [],
+        }
+        with patch("backend.app.main.ai_engine.create_food_draft", new_callable=AsyncMock) as create_draft:
+            create_draft.return_value = ready_result
+            response = self.client.post("/ai/food-draft", json={
+                "text": "yes",
+                "context": "one 100gmapple",
+                "clarification_type": "confirm_food",
+                "previous_question": "Did you mean one apple weighing 100 g?",
+            })
+
+        self.assertEqual(response.status_code, 200)
+        create_draft.assert_awaited_once_with(
+            "one 100 gm apple",
+            clarification_resolution="confirmed_food",
+        )
+
+    def test_repeated_ai_question_is_replaced_with_a_specific_portion_question(self):
+        repeated_question = "Could you please specify what you mean by 'one 100gmapple'? Are you referring to one apple that weighs 100g?"
+        with patch("backend.app.main.ai_engine.create_food_draft", new_callable=AsyncMock) as create_draft:
+            create_draft.return_value = {
+                "status": "clarification", "question": repeated_question,
+                "items": [], "corrections": [],
+            }
+            response = self.client.post("/ai/food-draft", json={
+                "text": "yes",
+                "context": "one 100gmapple",
+                "clarification_type": "confirm_food",
+                "previous_question": repeated_question,
+            })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "clarification")
+        self.assertNotEqual(response.json()["question"], repeated_question)
+        self.assertIn("portion", response.json()["question"])
 
     def test_food_search_resolves_common_indian_aliases(self):
         from backend.app.models.models import FoodItem

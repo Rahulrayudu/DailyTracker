@@ -55,7 +55,7 @@ class HealthAI:
             print(f"AI Parsing Error: {e}")
             raise
 
-    async def create_food_draft(self, food_text):
+    async def create_food_draft(self, food_text, clarification_resolution=None):
         """Return separately reviewable drafts for each food in a meal description."""
         item_schema = {
             "type": "object",
@@ -72,8 +72,9 @@ class HealthAI:
         schema = {
             "type": "object",
             "properties": {
-                "status": {"type": "string", "enum": ["ready", "clarification"]},
+                "status": {"type": "string", "enum": ["ready", "clarification", "conversation"]},
                 "question": {"type": "string"},
+                "reply": {"type": "string"},
                 "corrections": {"type": "array", "items": {
                     "type": "object",
                     "properties": {"original": {"type": "string"}, "corrected": {"type": "string"}},
@@ -81,13 +82,20 @@ class HealthAI:
                 }},
                 "items": {"type": "array", "items": item_schema, "maxItems": 10},
             },
-            "required": ["status", "question", "corrections", "items"],
+            "required": ["status", "question", "reply", "corrections", "items"],
         }
+        resolution_guidance = {
+            "confirmed_food": "The user answered yes to your previous food-description confirmation. Treat the listed description as confirmed. Do not ask them to confirm it again.",
+            "no_more_food": "The user answered that they have no other foods to add. Prepare drafts for the foods already listed. Do not ask what else they ate.",
+            "portion_provided": "The user has responded to a portion question. Use the added portion details in the message and move forward; do not repeat the earlier clarification.",
+        }.get(clarification_resolution, "")
         prompt = f"""You help a person create food diary entries. Interpret this message: {food_text!r}
+Clarification state: {resolution_guidance or 'No clarification is pending.'}
 
-Correct obvious spelling mistakes in food names without changing what the user means. List each fix in corrections as original/corrected.
-When the user names multiple separate foods or dishes (for example, idli and sambar, or rice, dal, and a banana), create one items entry for EACH food so each can be logged separately. Keep a combined dish such as vegetable pulao as one item unless the user separately lists its components.
-Understand everyday portions such as mini, small, single, medium, regular, large, one bowl, one plate, a handful, or half a serving. Treat these as useful portion information: estimate a typical amount, clearly state the size/serving assumption in that item's food_description, and do not ask for grams when a reasonable portion is described. If the user gives only a vague amount such as 'some' or gives no portion at all, return status='clarification' and ask one short question about the missing food(s). Do not invent nutrition values while asking.
+First decide whether the user is actually describing food to log. Greetings such as hi/hello, thanks, and general questions are normal conversation: return status='conversation', answer naturally in one brief reply, set items=[] and do not invent any foods. Use status='ready' or 'clarification' only when the message contains food or drink logging intent.
+Correct obvious spelling mistakes in food names without changing what the user means. Understand joined-up typing and dictation errors such as '100gmapple' as '100 g apple'; treat that as a clear 100 g apple entry and do not ask the user to confirm the spelling. Understand common typos such as 'protion' as 'portion'. List food-name fixes in corrections as original/corrected.
+When the user clearly names multiple separate foods or dishes (for example, idli and sambar, or rice, dal, and a banana), create one items entry for EACH named food so each can be logged separately. Never invent extra foods or split a greeting into foods. Keep a combined dish such as vegetable pulao as one item unless the user separately lists its components.
+Understand everyday portions such as mini, small, single, medium, regular, large, one bowl, one plate, a handful, or half a serving. Treat these as useful portion information: estimate a typical amount, clearly state the size/serving assumption in that item's food_description, and do not ask for grams when a reasonable portion is described. If the user says 'everything was one single portion' (including a typo like 'everything single protion'), apply that portion to EACH food already named. Example: 'one single mini gongura biriyani with bread halwa and badam milk. everything single portion' means exactly three entries: mini gongura biryani, one portion of bread halwa, and one portion of badam milk. Return ready drafts; do not ask what else they ate. Do not ask whether they ate anything else when they already listed foods; log the foods they named and let them add more later. If a real portion detail is missing, ask one short, specific question about only that detail. Never repeat the same clarification question after the user has answered it. Do not invent foods or nutrition values while a necessary clarification is pending.
 
 When enough detail is present, return status='ready'. Estimate nutrition for the full portion of each separate item, not per 100 g. Return calories in kcal and protein, carbs, fats, fiber in grams. Use reasonable food-composition estimates. Calories must be greater than zero for each ready item; don't use zero placeholders for nutrients normally present.
 Return only the JSON object matching the schema."""
@@ -107,13 +115,30 @@ Return only the JSON object matching the schema."""
 
         if not isinstance(result, dict):
             raise ValueError("The nutrition model returned an invalid response shape")
-        if any(key not in result for key in ("status", "question", "corrections", "items")) or result["status"] not in {"ready", "clarification"}:
+        if any(key not in result for key in ("status", "question", "reply", "corrections", "items")) or result["status"] not in {"ready", "clarification", "conversation"}:
             raise ValueError("The nutrition model returned an incomplete result")
+        if result["status"] == "conversation":
+            reply = result["reply"].strip() if isinstance(result["reply"], str) else ""
+            return {
+                "status": "conversation",
+                "reply": reply or "Hi! Tell me what food you’d like to log and roughly how much.",
+                "corrections": result["corrections"] if isinstance(result["corrections"], list) else [],
+                "items": [],
+            }
         if result["status"] == "clarification":
             question = result["question"].strip() if isinstance(result["question"], str) else ""
+            normalized_question = re.sub(r"[^a-z0-9\s]", "", question.casefold())
+            if re.search(r"\bwhat else\b|\banything else\b|\bwhat other food", normalized_question):
+                clarification_type = "more_foods"
+            elif re.search(r"\bare you referring\b|\bdid you mean\b|\bdo you mean\b|\bis that right\b", normalized_question):
+                clarification_type = "confirm_food"
+            else:
+                clarification_type = "missing_portion"
             return {
                 "status": "clarification",
                 "question": question or "How much did you have, and how was it prepared?",
+                "clarification_type": clarification_type,
+                "reply": "",
                 "corrections": result["corrections"] if isinstance(result["corrections"], list) else [],
                 "items": [],
                 "source": "AI-estimated",
@@ -138,6 +163,7 @@ Return only the JSON object matching the schema."""
         response_data = {
             "status": "ready",
             "question": "",
+            "reply": "",
             "corrections": result["corrections"] if isinstance(result["corrections"], list) else [],
             "items": validated_items,
             "source": "AI-estimated",

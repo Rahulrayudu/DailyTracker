@@ -48,6 +48,9 @@ pnpm-debug.log*
 *.sqlite-*
 *.sqlite3-*
 
+# Large local nutrition dataset shards
+/train-*.parquet
+
 # Logs, backups, and generated exports
 *.log
 backups/
