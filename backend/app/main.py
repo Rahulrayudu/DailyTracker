@@ -15,7 +15,7 @@ from math import floor
 from .database import get_db, init_db
 from .models.models import Profile, HealthLog, FoodItem, FoodFavorite, Exercise, WorkoutSession, WorkoutSet, WaterLog, WeightLog, MealPlan
 from .ai_engine import ai_engine
-from .nutrition_service import catalog_food_draft
+from .nutrition_service import catalog_food_drafts
 from .meal_planner import adjust_planned_meal_portion, generate_weekly_plan, preserve_logged_meals, required_food_names, swap_planned_meal
 from .workout_service import workout_service
 from ..seed_db import seed_nutrition_db
@@ -156,9 +156,11 @@ class MealPlanLogRequest(BaseModel):
 
 class WaterCreate(BaseModel):
     amount_ml: int = Field(gt=0, le=5000)
+    logged_date: Optional[date] = None
 
 class WeightCreate(BaseModel):
     weight_kg: float = Field(gt=0, le=700)
+    logged_date: Optional[date] = None
 
 class WorkoutSetCreate(BaseModel):
     exercise_id: int = Field(gt=0)
@@ -742,8 +744,11 @@ def get_daily_tracking(date_filter: Optional[date] = None, db: Session = Depends
     water_query = db.query(WaterLog)
     weight_query = db.query(WeightLog)
     if date_filter:
-        water_query = water_query.filter(func.date(WaterLog.timestamp) == date_filter)
-        weight_query = weight_query.filter(func.date(WeightLog.timestamp) == date_filter)
+        local_start = datetime.combine(date_filter, time.min, tzinfo=ZoneInfo("Asia/Kolkata"))
+        utc_start = local_start.astimezone(timezone.utc).replace(tzinfo=None)
+        utc_end = (local_start + timedelta(days=1)).astimezone(timezone.utc).replace(tzinfo=None)
+        water_query = water_query.filter(WaterLog.timestamp >= utc_start, WaterLog.timestamp < utc_end)
+        weight_query = weight_query.filter(WeightLog.timestamp >= utc_start, WeightLog.timestamp < utc_end)
     water_logs = water_query.order_by(WaterLog.timestamp.desc()).all()
     weight_logs = weight_query.order_by(WeightLog.timestamp.desc()).all()
     return {
@@ -755,38 +760,74 @@ def get_daily_tracking(date_filter: Optional[date] = None, db: Session = Depends
 
 @app.post("/tracking/water")
 def add_water(data: WaterCreate, db: Session = Depends(get_db)):
-    log = WaterLog(amount_ml=data.amount_ml)
+    log = WaterLog(amount_ml=data.amount_ml, timestamp=tracking_log_timestamp(data.logged_date))
     db.add(log); db.commit(); db.refresh(log)
     return log
 
+@app.put("/tracking/water/{log_id}")
+def update_water(log_id: int, data: WaterCreate, db: Session = Depends(get_db)):
+    log = db.query(WaterLog).filter(WaterLog.id == log_id).first()
+    if not log:
+        raise HTTPException(status_code=404, detail="Water entry not found.")
+    log.amount_ml = data.amount_ml
+    db.commit(); db.refresh(log)
+    return log
+
+def sync_profile_weight_from_latest_log(db: Session):
+    profile = db.query(Profile).first()
+    latest_log = db.query(WeightLog).order_by(WeightLog.timestamp.desc(), WeightLog.id.desc()).first()
+    if not profile or not latest_log:
+        return
+    profile.weight = latest_log.weight_kg
+    if profile.age and profile.height:
+        calculation_input = ProfileUpdate.model_construct(
+            age=profile.age,
+            sex=profile.sex if profile.sex in {"male", "female"} else "male",
+            height=profile.height,
+            weight=latest_log.weight_kg,
+            activity_level=profile.activity_level if profile.activity_level in {
+                "sedentary", "light", "moderate", "active", "very_active"
+            } else "sedentary",
+            diet_type=profile.diet_type or "non-veg",
+            goal=profile.goal if profile.goal in {"lose", "maintain", "gain"} else "maintain",
+            target_weight_kg=profile.target_weight_kg,
+        )
+        targets = calculate_profile_targets(calculation_input)
+        profile.bmr = targets["bmr"]
+        profile.maintenance_calories = targets["maintenance_calories"]
+        profile.calorie_target = targets["calorie_target"]
+        profile.bmi = targets["bmi"]
+        profile.protein_target = targets["protein_target"]
+        profile.carb_target = targets["carb_target"]
+        profile.fat_target = targets["fat_target"]
+
+def tracking_log_timestamp(logged_date: Optional[date]):
+    ist_now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    if logged_date is None or logged_date == ist_now.date():
+        return ist_now.astimezone(timezone.utc).replace(tzinfo=None)
+    if logged_date > ist_now.date():
+        raise HTTPException(status_code=422, detail="You cannot log water or weight for a future date.")
+    local_datetime = datetime.combine(logged_date, ist_now.time().replace(tzinfo=None), tzinfo=ZoneInfo("Asia/Kolkata"))
+    return local_datetime.astimezone(timezone.utc).replace(tzinfo=None)
+
 @app.post("/tracking/weight")
 def add_weight(data: WeightCreate, db: Session = Depends(get_db)):
-    log = WeightLog(weight_kg=data.weight_kg)
-    profile = db.query(Profile).first()
-    if profile:
-        profile.weight = data.weight_kg
-        if profile.age and profile.height:
-            calculation_input = ProfileUpdate.model_construct(
-                age=profile.age,
-                sex=profile.sex if profile.sex in {"male", "female"} else "male",
-                height=profile.height,
-                weight=data.weight_kg,
-                activity_level=profile.activity_level if profile.activity_level in {
-                    "sedentary", "light", "moderate", "active", "very_active"
-                } else "sedentary",
-                diet_type=profile.diet_type or "non-veg",
-                goal=profile.goal if profile.goal in {"lose", "maintain", "gain"} else "maintain",
-                target_weight_kg=profile.target_weight_kg,
-            )
-            targets = calculate_profile_targets(calculation_input)
-            profile.bmr = targets["bmr"]
-            profile.maintenance_calories = targets["maintenance_calories"]
-            profile.calorie_target = targets["calorie_target"]
-            profile.bmi = targets["bmi"]
-            profile.protein_target = targets["protein_target"]
-            profile.carb_target = targets["carb_target"]
-            profile.fat_target = targets["fat_target"]
-    db.add(log); db.commit(); db.refresh(log)
+    log = WeightLog(weight_kg=data.weight_kg, timestamp=tracking_log_timestamp(data.logged_date))
+    db.add(log)
+    db.flush()
+    sync_profile_weight_from_latest_log(db)
+    db.commit(); db.refresh(log)
+    return log
+
+@app.put("/tracking/weight/{log_id}")
+def update_weight(log_id: int, data: WeightCreate, db: Session = Depends(get_db)):
+    log = db.query(WeightLog).filter(WeightLog.id == log_id).first()
+    if not log:
+        raise HTTPException(status_code=404, detail="Weight entry not found.")
+    log.weight_kg = data.weight_kg
+    db.flush()
+    sync_profile_weight_from_latest_log(db)
+    db.commit(); db.refresh(log)
     return log
 
 # WORKOUT ENDPOINTS
@@ -957,11 +998,71 @@ def get_workout_records(db: Session = Depends(get_db)):
 async def parse_live(text: str):
     return await ai_engine.parse_food_live(text)
 
+@app.get("/ai/status")
+async def get_ai_status():
+    model_name = ai_engine.model_name
+    unavailable = {
+        "ollama_running": False,
+        "model_installed": False,
+        "model_loaded": False,
+        "model_name": model_name,
+        "status": "offline",
+        "message": "Ollama is not reachable from the backend.",
+    }
+
+    def normalize_model_name(name):
+        normalized = str(name or "").strip().casefold()
+        return normalized if ":" in normalized else f"{normalized}:latest"
+
+    try:
+        async with httpx.AsyncClient(timeout=2.5) as client:
+            tags_response = await client.get(f"{ai_engine.ollama_url}/api/tags")
+            tags_response.raise_for_status()
+            tags = tags_response.json()
+            installed_models = tags.get("models", []) if isinstance(tags, dict) else []
+            model_installed = any(
+                normalize_model_name(model.get("name") or model.get("model")) == normalize_model_name(model_name)
+                for model in installed_models
+                if isinstance(model, dict)
+            )
+            try:
+                running_response = await client.get(f"{ai_engine.ollama_url}/api/ps")
+                running_response.raise_for_status()
+                running_data = running_response.json()
+                running_models = running_data.get("models", []) if isinstance(running_data, dict) else []
+                model_loaded = any(
+                    normalize_model_name(model.get("name") or model.get("model")) == normalize_model_name(model_name)
+                    for model in running_models
+                    if isinstance(model, dict)
+                )
+            except (httpx.HTTPError, ValueError):
+                model_loaded = False
+    except (httpx.HTTPError, ValueError):
+        return unavailable
+
+    if not model_installed:
+        status = "model_missing"
+        message = f"Ollama is online, but {model_name} is not installed."
+    elif model_loaded:
+        status = "ready"
+        message = f"{model_name} is loaded and ready."
+    else:
+        status = "idle"
+        message = f"Ollama is online; {model_name} is installed and will load when needed."
+    return {
+        "ollama_running": True,
+        "model_installed": model_installed,
+        "model_loaded": model_loaded,
+        "model_name": model_name,
+        "status": status,
+        "message": message,
+    }
+
 @app.post("/ai/food-draft")
 async def food_draft(request: FoodDraftRequest, db: Session = Depends(get_db)):
     if not request.text.strip():
         raise HTTPException(status_code=422, detail="Describe the food and amount first.")
-    catalog_draft = catalog_food_draft(request.text.strip(), db, FOOD_SEARCH_ALIASES)
+    catalog_draft = catalog_food_drafts(request.text.strip(), db, FOOD_SEARCH_ALIASES)
     if catalog_draft:
         return catalog_draft
     try:

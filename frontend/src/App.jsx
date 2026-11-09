@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
 import {
@@ -25,6 +25,12 @@ function customDebounce(func, wait) {
 function parseWorkoutTimestamp(value) {
   const timestamp = String(value || '');
   return new Date(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(timestamp) ? timestamp : `${timestamp}Z`);
+}
+
+function formatTrackingTime(value) {
+  return parseWorkoutTimestamp(value).toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit',
+  });
 }
 
 function istRangeStart(days) {
@@ -289,9 +295,35 @@ function InsightsTab({ data, loading, days, onDaysChange, sessions = [], records
   }));
   const muscleVolumeRows = [...muscleVolumeByGroup.values()].sort((a, b) => b.sets - a.sets || a.muscle_group.localeCompare(b.muscle_group));
   const maxMuscleSets = Math.max(1, ...muscleVolumeRows.map(group => group.sets));
+  const todayIst = indiaDateString();
+  const dateOrdinal = dateString => {
+    const [year, month, day] = dateString.split('-').map(Number);
+    return Date.UTC(year, month - 1, day) / 86400000;
+  };
+  const recoveryGroups = new Map();
+  const recentWorkoutCutoff = istRangeStart(7);
+  sessions.forEach(session => {
+    const timestamp = parseWorkoutTimestamp(session.date);
+    const time = timestamp.getTime();
+    if (!Number.isFinite(time) || time > Date.now()) return;
+    const sessionDate = indiaDateString(timestamp);
+    (session.sets || []).forEach(set => {
+      if (Number(set.reps) <= 0 || !set.muscle_group) return;
+      const group = recoveryGroups.get(set.muscle_group) || { muscle_group: set.muscle_group, lastTime: 0, lastDate: '', setsLast7Days: 0 };
+      if (time > group.lastTime) {
+        group.lastTime = time;
+        group.lastDate = sessionDate;
+      }
+      if (time >= recentWorkoutCutoff) group.setsLast7Days += 1;
+      recoveryGroups.set(set.muscle_group, group);
+    });
+  });
+  const recoveryRows = [...recoveryGroups.values()]
+    .map(group => ({ ...group, daysAgo: Math.max(0, dateOrdinal(todayIst) - dateOrdinal(group.lastDate)) }))
+    .sort((a, b) => a.daysAgo - b.daysAgo || a.muscle_group.localeCompare(b.muscle_group));
 
   return (
-    <div className="space-y-8">
+    <div className="insights-page min-w-0 space-y-8">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div><p className="text-xs font-bold uppercase tracking-[.22em] text-green-600">Patterns over time</p><h2 className="mt-2 text-3xl font-extrabold tracking-tight">Your insights</h2><p className="mt-2 text-sm text-slate-400">Nutrition, weigh-ins and workouts from your local logs, grouped by India Standard Time.</p></div>
         <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Look back
@@ -327,23 +359,23 @@ function InsightsTab({ data, loading, days, onDaysChange, sessions = [], records
             </svg></div> : <p className="rounded-xl bg-slate-900/40 p-8 text-center text-sm text-slate-400">No food entries in this period yet. Log meals on Home to start the trend.</p>}
           </section>
 
-          <div className="grid gap-6 xl:grid-cols-[1.2fr_.8fr]">
-            <section className="glass-card p-5 md:p-7">
+          <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(280px,.8fr)]">
+            <section className="glass-card min-w-0 p-5 md:p-7">
               <div className="mb-5 flex items-end justify-between gap-3"><div><h3 className="text-lg font-extrabold">Weight trend</h3><p className="mt-1 text-xs text-slate-500">Only days with a weigh-in are plotted.</p></div>{summary.weight_change_kg != null && <span className={`text-sm font-extrabold ${summary.weight_change_kg <= 0 ? 'text-emerald-300' : 'text-amber-300'}`}>{summary.weight_change_kg > 0 ? '+' : ''}{summary.weight_change_kg.toFixed(1)} kg</span>}</div>
-              {weightPoints.length >= 2 ? <div className="w-full overflow-x-auto"><svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="min-w-[540px] w-full" role="img" aria-label="Weight trend from recorded weigh-ins">
+              {weightPoints.length > 0 ? <div className="w-full min-w-0 overflow-x-auto"><svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="min-w-[540px] w-full" role="img" aria-label="Weight trend from recorded weigh-ins">
                 <title>Weight trend</title>
                 {[0, 0.5, 1].map(tick => { const y = chartTop + plotHeight * tick; const value = weightMax - ((weightMax - weightMin) * tick); return <g key={tick}><line x1={chartLeft} x2={chartWidth - chartRight} y1={y} y2={y} stroke="rgba(255,255,255,.09)"/><text x={chartLeft - 8} y={y + 4} textAnchor="end" fill="#8490AA" fontSize="10">{value.toFixed(1)}</text></g>; })}
                 <polyline points={weightPoints.map(point => `${point.x},${point.y}`).join(' ')} fill="none" stroke="#34F5C5" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round"/>
                 {weightPoints.map(point => <g key={`${point.item.date}-${point.x}`}><circle cx={point.x} cy={point.y} r="5" fill="#34F5C5" stroke="#08111D" strokeWidth="2"><title>{point.item.date}: {point.item.weight_kg} kg</title></circle></g>)}
                 {daily.map((day, index) => index % labelEvery === 0 && <text key={day.date} x={chartLeft + index * barStep + barStep / 2} y={chartHeight - 10} textAnchor="middle" fill="#8490AA" fontSize="9">{days > 14 ? day.date.slice(8) : day.day}</text>)}
-              </svg></div> : <p className="rounded-xl bg-slate-900/40 p-8 text-center text-sm text-slate-400">Add at least two weigh-ins in Home to see a trend line.</p>}
+              </svg></div> : <p className="rounded-xl bg-slate-900/40 p-8 text-center text-sm text-slate-400">Log a weigh-in on Home to start your weight trend.</p>}
             </section>
 
-            <section className="glass-card p-5 md:p-7">
+            <section className="glass-card min-w-0 p-5 md:p-7">
               <h3 className="text-lg font-extrabold">Daily check-in</h3><p className="mt-1 text-xs text-slate-500">Recent days · IST</p>
               <div className="mt-4 max-h-[330px] space-y-2 overflow-y-auto pr-1">
                 {[...daily].reverse().map(day => <div key={day.date} className="flex items-center justify-between gap-3 rounded-xl border border-white/5 bg-slate-900/30 px-3 py-3">
-                  <div className="min-w-0"><p className="text-xs font-bold">{new Date(`${day.date}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</p><p className="mt-1 truncate text-[10px] text-slate-500">{day.workout_count ? `${day.workout_count} workout · ${day.workout_minutes} min` : day.water_ml ? `${(day.water_ml / 1000).toFixed(1)} L water` : 'No activity logged'}</p></div>
+                  <div className="min-w-0"><p className="text-xs font-bold">{new Date(`${day.date}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</p><p className="mt-1 truncate text-[10px] text-slate-500">{[day.workout_count ? `${day.workout_count} workout · ${day.workout_minutes} min` : null, day.water_ml ? `${(day.water_ml / 1000).toFixed(1)} L water` : null, day.weight_kg ? `${Number(day.weight_kg).toFixed(1)} kg` : null].filter(Boolean).join(' · ') || 'No activity logged'}</p></div>
                   <span className="shrink-0 text-xs font-extrabold text-orange-300">{day.calories ? `${Math.round(day.calories)} kcal` : '—'}</span>
                 </div>)}
               </div>
@@ -374,6 +406,35 @@ function InsightsTab({ data, loading, days, onDaysChange, sessions = [], records
             )}
             <div className="mt-5"><div className="mb-2"><h4 className="text-sm font-extrabold">Loaded workout volume</h4><p className="mt-1 text-xs text-slate-500">Total reps × logged load per session · bodyweight-only sets are excluded.</p></div><WorkoutProgressChart title="Volume by workout" points={workoutVolumePoints} color="#A78BFA" unit="kg × reps" emptyMessage="Log reps and load for weighted sets to see session volume." /></div>
           </section>
+
+          <section className="glass-card workout-balance-section p-5 md:p-7">
+            <div className="mb-5"><p className="text-xs font-bold uppercase tracking-[.18em] text-sky-300">Training rhythm</p><h3 className="mt-1 text-lg font-extrabold">Weekly frequency and muscle volume</h3><p className="mt-1 text-xs text-slate-500">Completed sessions and logged work sets in the selected period.</p></div>
+            <div className="grid gap-4 xl:grid-cols-2">
+              <WorkoutProgressChart title="Sessions per calendar week" points={weeklyTrainingPoints} color="#FBBF24" unit="sessions" emptyMessage="Complete a tracked workout to build your weekly frequency view." />
+              <div className="workout-muscle-volume-card">
+                <div className="workout-progress-card-heading"><h4>Completed sets by muscle</h4><span>SET VOLUME</span></div>
+                {muscleVolumeRows.length ? <div className="workout-muscle-volume-list">
+                  {muscleVolumeRows.map(group => <div key={group.muscle_group} className="workout-muscle-volume-row">
+                    <div className="workout-muscle-volume-main"><div className="workout-muscle-volume-label"><b>{group.muscle_group}</b><span>{group.sets} {group.sets === 1 ? 'set' : 'sets'} · {group.reps} reps</span></div><div className="workout-muscle-volume-track"><span style={{ width: `${Math.max(6, (group.sets / maxMuscleSets) * 100)}%` }} /></div></div>
+                    <small>{group.loadedSets ? `${Math.round(group.loadVolume).toLocaleString()} kg × reps · ${group.loadedSets} loaded ${group.loadedSets === 1 ? 'set' : 'sets'}` : 'Bodyweight'}</small>
+                  </div>)}
+                </div> : <p className="workout-progress-empty">Logged exercise sets will appear here by muscle group.</p>}
+              </div>
+            </div>
+          </section>
+
+          <section className="glass-card muscle-recovery-section p-5 md:p-7">
+            <div className="mb-5"><p className="text-xs font-bold uppercase tracking-[.18em] text-cyan-300">Based on your logs</p><h3 className="mt-1 text-lg font-extrabold">Muscle training recency</h3><p className="mt-1 text-xs text-slate-500">See when each muscle group was last trained and its logged sets over the past 7 days.</p></div>
+            {recoveryRows.length ? <>
+              <div className="muscle-recovery-list">
+                {recoveryRows.map(group => <article key={group.muscle_group} className="muscle-recovery-row">
+                  <div className="muscle-recovery-copy"><strong>{group.muscle_group}</strong><span>{group.daysAgo === 0 ? 'Trained today' : group.daysAgo === 1 ? 'Last trained yesterday' : `Last trained ${group.daysAgo} days ago`}</span></div>
+                  <div className="muscle-recovery-meta"><span className={`muscle-recency-badge ${group.daysAgo <= 1 ? 'is-recent' : 'is-rested'}`}>{group.daysAgo <= 1 ? 'Recent' : 'No recent session'}</span><small>{group.setsLast7Days} {group.setsLast7Days === 1 ? 'set' : 'sets'} · 7 days</small></div>
+                </article>)}
+              </div>
+              <p className="muscle-recovery-note"><Info size={14} aria-hidden="true" />Training recency is only a log summary; it can’t measure soreness, recovery, or readiness.</p>
+            </> : <p className="workout-progress-empty">Complete a tracked workout with exercise sets to see muscle-specific training recency.</p>}
+          </section>
         </>
       )}
     </div>
@@ -387,6 +448,50 @@ const ProfileField = ({ label, children, hint }) => (
     {hint && <span className="block normal-case font-medium tracking-normal text-slate-500">{hint}</span>}
   </label>
 );
+
+function DailyTrackingEntries({ kind, entries = [], editingId, editValue, setEditValue, onStartEdit, onCancelEdit, onSaveEdit }) {
+  if (!entries.length) return null;
+  const isWeight = kind === 'weight';
+  const title = isWeight ? 'Weigh-ins for this date' : 'Water entries for this date';
+  return (
+    <div className="tracking-log-list" aria-label={title}>
+      <p className="tracking-log-heading">{title}</p>
+      {entries.map(entry => <div key={entry.id} className="tracking-log-row">
+        {editingId === entry.id ? <>
+          <input
+            aria-label={isWeight ? 'Edit weight in kilograms' : 'Edit water amount in milliliters'}
+            type="number" min={isWeight ? '1' : '1'} max={isWeight ? '700' : '5000'}
+            step={isWeight ? '0.1' : '1'} value={editValue}
+            onChange={event => setEditValue(event.target.value)}
+            className="tracking-log-edit-input"
+          />
+          <span className="tracking-log-unit">{isWeight ? 'kg' : 'ml'}</span>
+          <button type="button" onClick={() => onSaveEdit(entry.id)} className="tracking-entry-action is-save" aria-label="Save change"><Check size={16} /></button>
+          <button type="button" onClick={onCancelEdit} className="tracking-entry-action" aria-label="Cancel edit"><X size={16} /></button>
+        </> : <>
+          <div className="tracking-log-description"><strong>{isWeight ? `${Number(entry.weight_kg).toFixed(1)} kg` : `${entry.amount_ml} ml`}</strong><span>{formatTrackingTime(entry.timestamp)}</span></div>
+          <button type="button" onClick={() => onStartEdit(entry)} className="tracking-entry-action tracking-entry-edit">Edit</button>
+        </>}
+      </div>)}
+    </div>
+  );
+}
+
+function AIStatusIndicator({ status, loading, onRefresh }) {
+  const statusKey = loading ? 'checking' : status?.status || 'unknown';
+  const message = loading ? 'Checking local AI…' : status?.message || 'Ollama status has not been checked.';
+  return (
+    <div className={`ai-status-indicator is-${statusKey}`} role="status" aria-live="polite">
+      <span className="ai-status-dot" aria-hidden="true" />
+      <div className="ai-status-copy">
+        <strong>{message}</strong>
+        {status?.model_name && <span>Configured model · {status.model_name}</span>}
+        {statusKey === 'api_unreachable' && <span>The LocalHealth API could not be reached.</span>}
+      </div>
+      <button type="button" onClick={onRefresh} disabled={loading} className="ai-status-refresh">Refresh</button>
+    </div>
+  );
+}
 
 function MealPlannerPanel({ profile, plan, loading, saving, onGenerate, onSwap, onAdjustPortion, onLogMeal }) {
   const [showGroceries, setShowGroceries] = useState(false);
@@ -452,7 +557,7 @@ function MealPlannerPanel({ profile, plan, loading, saving, onGenerate, onSwap, 
                         <ul className="mt-2 grid gap-1 text-xs text-slate-500 sm:grid-cols-2">{meal.ingredients.map(item => <li key={`${item.name}-${item.unit}`}>{item.amount} {item.unit} {item.name}</li>)}</ul>
                       </details>
                       {!meal.logged && (meal.swap_options?.length || 0) > 1 && <div className="mt-3 flex gap-2">
-                        <select aria-label={`Choose a ${meal.meal_type.toLowerCase()} replacement`} value={selectedRecipe} onChange={event => setSwapSelections(previous => ({ ...previous, [key]: event.target.value }))} className="min-w-0 flex-1 rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-xs text-slate-200">{meal.swap_options.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}</select>
+                      <select aria-label={`Choose a ${meal.meal_type.toLowerCase()} replacement`} value={selectedRecipe} onChange={event => setSwapSelections(previous => ({ ...previous, [key]: event.target.value }))} className="min-w-0 flex-1 rounded-lg border border-white/10 px-3 py-2 text-xs">{meal.swap_options.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}</select>
                         <button type="button" onClick={() => onSwap(day.date, meal.meal_type, selectedRecipe)} disabled={saving || selectedRecipe === meal.recipe_id} className="rounded-lg border border-white/10 px-3 py-2 text-xs font-bold text-slate-300 disabled:opacity-40">Swap</button>
                       </div>}
                     </article>;
@@ -633,6 +738,10 @@ export default function App() {
   const [tracking, setTracking] = useState({ water_total_ml: 0, water_logs: [], weight_logs: [], latest_weight_kg: null });
   const [waterAmount, setWaterAmount] = useState('250');
   const [weightInput, setWeightInput] = useState('');
+  const [editingWaterLogId, setEditingWaterLogId] = useState(null);
+  const [waterEditValue, setWaterEditValue] = useState('');
+  const [editingWeightLogId, setEditingWeightLogId] = useState(null);
+  const [weightEditValue, setWeightEditValue] = useState('');
   const [input, setInput] = useState("");
   const [category, setCategory] = useState("nutrition");
   const [loading, setLoading] = useState(false);
@@ -664,6 +773,8 @@ export default function App() {
   const [insightDays, setInsightDays] = useState(7);
   const [insightData, setInsightData] = useState(null);
   const [insightsLoading, setInsightsLoading] = useState(false);
+  const [ollamaStatus, setOllamaStatus] = useState(null);
+  const [ollamaStatusLoading, setOllamaStatusLoading] = useState(false);
 
   const [aiChips, setAiChips] = useState([]);
   const [isParsing, setIsParsing] = useState(false);
@@ -696,13 +807,32 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [foodMessages, setFoodMessages] = useState([]);
   const [foodContext, setFoodContext] = useState("");
-  const [foodDraft, setFoodDraft] = useState(null);
+  const [foodDrafts, setFoodDrafts] = useState([]);
   const [foodThinking, setFoodThinking] = useState(false);
   const [selectedMeal, setSelectedMeal] = useState('Snack');
   const [selectedFood, setSelectedFood] = useState(null);
   const [foodServings, setFoodServings] = useState('1');
   const [manualEntryOpen, setManualEntryOpen] = useState(false);
   const [manualFood, setManualFood] = useState({ name: '', portion: '1 serving', calories: '', protein: '', carbs: '', fats: '', fiber: '' });
+
+  const refreshOllamaStatus = useCallback(async () => {
+    setOllamaStatusLoading(true);
+    try {
+      const response = await axios.get(`${API_BASE}/ai/status`, { timeout: 5000 });
+      setOllamaStatus(response.data);
+    } catch {
+      setOllamaStatus({ status: 'api_unreachable', ollama_running: false, model_installed: false, model_loaded: false, message: 'Could not check the local AI service.' });
+    } finally {
+      setOllamaStatusLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'coach' && !showLogPage) return undefined;
+    refreshOllamaStatus();
+    const timer = setInterval(refreshOllamaStatus, 30_000);
+    return () => clearInterval(timer);
+  }, [activeTab, showLogPage, refreshOllamaStatus]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -798,15 +928,37 @@ export default function App() {
   };
 
   const addWater = async (amount = Number(waterAmount)) => {
-    try { await axios.post(`${API_BASE}/tracking/water`, { amount_ml: amount }); await loadAllData(); notify(`${amount} ml water logged.`); }
+    try { await axios.post(`${API_BASE}/tracking/water`, { amount_ml: amount, logged_date: selectedDate }); await loadAllData(); notify(`${amount} ml water logged.`); }
     catch (e) { notify(e.response?.data?.detail || 'Could not log water.', 'error'); }
   };
 
   const addWeight = async () => {
     const value = Number(weightInput);
     if (!value || value <= 0) { notify('Enter a valid weight in kilograms.', 'error'); return; }
-    try { await axios.post(`${API_BASE}/tracking/weight`, { weight_kg: value }); setWeightInput(''); await loadAllData(); notify('Weight entry saved.'); }
+    try { await axios.post(`${API_BASE}/tracking/weight`, { weight_kg: value, logged_date: selectedDate }); setWeightInput(''); await loadAllData(); notify('Weight entry saved.'); }
     catch (e) { notify(e.response?.data?.detail || 'Could not save weight.', 'error'); }
+  };
+
+  const saveWaterEdit = async logId => {
+    const amount = Number(waterEditValue);
+    if (!Number.isInteger(amount) || amount < 1 || amount > 5000) { notify('Water amount must be between 1 and 5000 ml.', 'error'); return; }
+    try {
+      await axios.put(`${API_BASE}/tracking/water/${logId}`, { amount_ml: amount });
+      setEditingWaterLogId(null);
+      await loadAllData();
+      notify('Water entry updated.');
+    } catch (e) { notify(e.response?.data?.detail || 'Could not update this water entry.', 'error'); }
+  };
+
+  const saveWeightEdit = async logId => {
+    const value = Number(weightEditValue);
+    if (!value || value <= 0 || value > 700) { notify('Enter a weight between 1 and 700 kg.', 'error'); return; }
+    try {
+      await axios.put(`${API_BASE}/tracking/weight/${logId}`, { weight_kg: value });
+      setEditingWeightLogId(null);
+      await loadAllData();
+      notify('Weigh-in updated.');
+    } catch (e) { notify(e.response?.data?.detail || 'Could not update this weigh-in.', 'error'); }
   };
 
   const fetchAiChips = async (text) => {
@@ -856,24 +1008,33 @@ export default function App() {
     setFoodMessages(prev => [...prev, { role: 'user', text: message }]);
     setInput('');
     setFoodThinking(true);
-    setFoodDraft(null);
+    setFoodDrafts([]);
     try {
       const res = await axios.post(`${API_BASE}/ai/food-draft`, { text: combinedText });
       if (res.data.status === 'clarification') {
-        setFoodMessages(prev => [...prev, { role: 'assistant', text: res.data.question || 'How much did you have?' }]);
+        const corrections = (res.data.corrections || []).map(item => `“${item.original}” → “${item.corrected}”`).join(', ');
+        const correctionNote = corrections ? ` I read the spelling as ${corrections}.` : '';
+        setFoodMessages(prev => [...prev, { role: 'assistant', text: `${res.data.question || 'How much did you have?'}${correctionNote}` }]);
       } else {
-        setFoodDraft(res.data);
-        const basis = res.data.source === 'database' ? 'I matched this to the local food catalog' : 'I estimated the nutrition';
-        setFoodMessages(prev => [...prev, { role: 'assistant', text: `${basis} for ${res.data.food_description}. Please review the values below before saving.` }]);
+        const drafts = Array.isArray(res.data.items) && res.data.items.length ? res.data.items : [res.data];
+        setFoodDrafts(drafts);
+        const corrections = (res.data.corrections || []).map(item => `“${item.original}” → “${item.corrected}”`).join(', ');
+        const correctionNote = corrections ? ` I corrected the spelling: ${corrections}.` : '';
+        const responseText = drafts.length > 1
+          ? `I separated your message into ${drafts.length} food entries. Review and save each item separately.${correctionNote}`
+          : `I ${drafts[0].source === 'database' ? 'matched this to the local food catalog' : 'estimated the nutrition'} for ${drafts[0].food_description}. Review the values before saving.${correctionNote}`;
+        setFoodMessages(prev => [...prev, { role: 'assistant', text: responseText }]);
       }
     } catch (e) {
       const detail = e.response?.data?.detail || 'I could not estimate that just now. Please try again.';
+      setFoodDrafts([]);
       setFoodMessages(prev => [...prev, { role: 'assistant', text: detail }]);
       notify(detail, 'error');
-    } finally { setFoodThinking(false); }
+    } finally { setFoodThinking(false); refreshOllamaStatus(); }
   };
 
-  const saveFoodDraft = async () => {
+  const saveFoodDraft = async draftIndex => {
+    const foodDraft = foodDrafts[draftIndex];
     if (!foodDraft) return;
     const nutrientKeys = ['calories', 'protein', 'carbs', 'fats', 'fiber'];
     if (nutrientKeys.some(key => foodDraft[key] === '' || foodDraft[key] == null)) {
@@ -899,8 +1060,10 @@ export default function App() {
         ...nutrients
       });
       await loadAllData();
-      setFoodMessages([]); setFoodContext(''); setFoodDraft(null); setAiChips([]);
-      notify('Nutrition saved and added to today’s totals.');
+      const remainingDrafts = foodDrafts.filter((_, index) => index !== draftIndex);
+      setFoodDrafts(remainingDrafts);
+      if (!remainingDrafts.length) { setFoodMessages([]); setFoodContext(''); setAiChips([]); }
+      notify(`${foodDraft.food_description} saved as its own food log.`);
     } catch (e) { notify(e.response?.data?.detail || 'Could not save the nutrition estimate.', 'error'); }
     finally { setLoading(false); }
   };
@@ -1069,13 +1232,14 @@ export default function App() {
         setChatMessages(prev => {
           const next = [...prev];
           const last = next[next.length - 1];
-          if (last?.role === 'coach') next[next.length - 1] = { ...last, text: e.message || 'Sorry, I could not connect to the coach. Please try again.' };
+          if (last?.role === 'coach') next[next.length - 1] = { ...last, role: 'error', text: e.message || 'Sorry, I could not connect to the coach. Please try again.' };
           return next;
         });
       }
     } finally {
       chatAbortRef.current = null;
       setChatLoading(false);
+      refreshOllamaStatus();
     }
   };
 
@@ -1448,9 +1612,10 @@ export default function App() {
                   <div className="absolute top-0 right-0 p-4 opacity-[.08]"><Salad size={78} strokeWidth={1.25} /></div>
                   <div className="flex items-center gap-2 text-green-700">
                     <Sparkles size={20} strokeWidth={1.8} />
-                    <span className="text-sm font-bold uppercase tracking-widest">AI Assistant</span>
+                    <span className="text-sm font-bold uppercase tracking-widest">Food logging assistant</span>
                   </div>
-                  <p className="text-sm text-green-600 font-medium">Describe your meal in plain English. I'll calculate the nutrition for you!</p>
+                  <p className="text-sm text-green-600 font-medium">Describe foods with portions like “mini,” “single,” or “small bowl.” Common catalog foods work offline; Ollama estimates other foods when running. Multiple dishes are split into separate entries.</p>
+                  <AIStatusIndicator status={ollamaStatus} loading={ollamaStatusLoading} onRefresh={refreshOllamaStatus} />
                   
                   <div className="flex flex-col items-center gap-4">
                     {foodMessages.length > 0 && (
@@ -1463,26 +1628,26 @@ export default function App() {
                         {foodThinking && <div className="flex items-center gap-3 rounded-2xl bg-white/90 border border-green-100 px-4 py-3 text-sm text-slate-600 shadow-sm" role="status" aria-live="polite"><i className="w-4 h-4 shrink-0 rounded-full border-2 border-green-500/25 border-t-green-600 animate-spin"/><span>Understanding the food, checking the portion, and estimating nutrition…</span></div>}
                       </div>
                     )}
-                    {foodDraft && (
-                      <div className="w-full max-w-xl rounded-2xl bg-white p-5 border border-green-100 shadow-sm">
+                    {foodDrafts.map((foodDraft, draftIndex) => (
+                      <div key={`${foodDraft.food_description}-${draftIndex}`} className="w-full max-w-xl rounded-2xl bg-white p-5 border border-green-100 shadow-sm">
                         <div className="flex items-start justify-between gap-3 mb-4">
-                          <div><p className="text-sm font-bold text-slate-800">Nutrition estimate</p><p className="text-xs text-slate-500 mt-1">Estimated for {foodDraft.food_description}</p></div>
+                          <div><p className="text-sm font-bold text-slate-800">{foodDrafts.length > 1 ? `Food ${draftIndex + 1} of ${foodDrafts.length}` : 'Nutrition estimate'}</p><p className="text-xs text-slate-500 mt-1">Estimated for {foodDraft.food_description}</p></div>
                           <span className={`text-[10px] uppercase tracking-wide rounded-full px-2 py-1 ${foodDraft.source === 'database' ? 'bg-emerald-50 text-emerald-700' : foodDraft.source === 'user-edited' ? 'bg-sky-50 text-sky-700' : 'bg-amber-50 text-amber-700'}`}>{foodDraft.source === 'database' ? 'Local catalog' : foodDraft.source === 'user-edited' ? 'Edited by you' : 'AI estimate'}</span>
                         </div>
                         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                           {['calories', 'protein', 'carbs', 'fats', 'fiber'].map((key) => (
                             <label key={key} className="text-[10px] uppercase tracking-wide text-slate-500 font-bold">{key === 'calories' ? 'kcal' : `${key} (g)`}
-                              <input type="number" min="0" step="0.1" value={foodDraft[key]} onChange={e => setFoodDraft(prev => ({ ...prev, [key]: e.target.value, source: 'user-edited', food_item_id: null }))} className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-sm text-slate-800 outline-none focus:border-green-400" />
+                              <input type="number" min="0" step="0.1" value={foodDraft[key]} onChange={e => setFoodDrafts(previous => previous.map((item, index) => index === draftIndex ? { ...item, [key]: e.target.value, source: 'user-edited', food_item_id: null } : item))} className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-sm text-slate-800 outline-none focus:border-green-400" />
                             </label>
                           ))}
                         </div>
                         <p className="mt-3 text-xs text-slate-500">{foodDraft.source === 'database' ? 'Scaled from your local food catalog serving; edit any value if needed.' : foodDraft.source === 'user-edited' ? 'You changed this estimate. The saved entry will be marked as user-edited.' : 'AI estimate for the described portion. Review and adjust before saving.'}</p>
                         <div className="flex justify-end gap-2 mt-4">
-                          <button onClick={() => setFoodDraft(null)} className="px-4 py-2 rounded-full text-xs font-bold text-slate-500 hover:bg-slate-50">Edit details</button>
-                          <button onClick={saveFoodDraft} disabled={loading} className="px-5 py-2 rounded-full bg-green-600 text-white text-xs font-bold hover:bg-green-700 disabled:opacity-60">{loading ? 'Saving…' : 'Confirm & save'}</button>
+                          <button onClick={() => setFoodDrafts(previous => previous.filter((_, index) => index !== draftIndex))} className="px-4 py-2 rounded-full text-xs font-bold text-slate-500 hover:bg-slate-50">Remove draft</button>
+                          <button onClick={() => saveFoodDraft(draftIndex)} disabled={loading} className="px-5 py-2 rounded-full bg-green-600 text-white text-xs font-bold hover:bg-green-700 disabled:opacity-60">{loading ? 'Saving…' : 'Confirm & save separately'}</button>
                         </div>
                       </div>
-                    )}
+                    ))}
                     <AnimatePresence>
                       {aiChips.length > 0 && (
                         <motion.div 
@@ -1509,7 +1674,7 @@ export default function App() {
                         value={input} 
                         onChange={e => handleInputChange(e.target.value)}
                         onKeyPress={e => e.key === 'Enter' && submitFoodMessage()}
-                        placeholder="e.g. 2 chapati and dal" 
+                        placeholder="e.g. 2 chapati, one mini idli, and a small bowl of dal"
                         className="flex-1 bg-transparent px-4 py-3 text-sm outline-none"
                       />
                       <div className="relative">
@@ -1672,15 +1837,27 @@ export default function App() {
                   </details>
 
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <section className="glass-card p-6 space-y-4">
-                      <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-widest text-slate-500">Hydration</p><p className="text-3xl font-extrabold mt-2">{(tracking.water_total_ml / 1000).toFixed(2)}<span className="text-sm text-slate-400 ml-2">L today</span></p></div><Droplets size={26} className="text-cyan-300" strokeWidth={1.7} /></div>
+                    <section className="glass-card min-w-0 p-6 space-y-4">
+                      <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-widest text-slate-500">Hydration</p><p className="text-3xl font-extrabold mt-2">{(tracking.water_total_ml / 1000).toFixed(2)}<span className="text-sm text-slate-400 ml-2">L on selected day</span></p></div><Droplets size={26} className="text-cyan-300" strokeWidth={1.7} /></div>
                       <div className="flex flex-wrap gap-2">{[150, 250, 500].map(amount => <button key={amount} onClick={() => addWater(amount)} className="glass-chip px-4 py-2 text-sm font-bold text-cyan-200">+{amount} ml</button>)}</div>
                       <div className="flex gap-2"><input aria-label="Custom water amount in milliliters" type="number" min="1" value={waterAmount} onChange={e => setWaterAmount(e.target.value)} className="min-w-0 flex-1 rounded-xl border px-3 py-2"/><button onClick={() => addWater()} className="rounded-xl bg-green-500 px-4 py-2 text-sm font-bold">Log water</button></div>
+                      <DailyTrackingEntries
+                        kind="water" entries={tracking.water_logs}
+                        editingId={editingWaterLogId} editValue={waterEditValue} setEditValue={setWaterEditValue}
+                        onStartEdit={entry => { setEditingWaterLogId(entry.id); setWaterEditValue(String(entry.amount_ml)); }}
+                        onCancelEdit={() => setEditingWaterLogId(null)} onSaveEdit={saveWaterEdit}
+                      />
                     </section>
-                    <section className="glass-card p-6 space-y-4">
-                      <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-widest text-slate-500">Weight</p><p className="text-3xl font-extrabold mt-2">{tracking.latest_weight_kg ? `${tracking.latest_weight_kg.toFixed(1)}` : '—'}<span className="text-sm text-slate-400 ml-2">kg latest this day</span></p></div><Scale size={26} className="text-violet-300" strokeWidth={1.7} /></div>
+                    <section className="glass-card min-w-0 p-6 space-y-4">
+                      <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-widest text-slate-500">Weight</p><p className="text-3xl font-extrabold mt-2">{tracking.latest_weight_kg ? `${tracking.latest_weight_kg.toFixed(1)}` : '—'}<span className="text-sm text-slate-400 ml-2">kg latest on selected date</span></p></div><Scale size={26} className="text-violet-300" strokeWidth={1.7} /></div>
                       <div className="flex gap-2"><input aria-label="Weight in kilograms" type="number" min="1" max="700" step="0.1" placeholder="Weight in kg" value={weightInput} onChange={e => setWeightInput(e.target.value)} className="min-w-0 flex-1 rounded-xl border px-3 py-2"/><button onClick={addWeight} className="rounded-xl bg-green-500 px-4 py-2 text-sm font-bold">Save weight</button></div>
                       <p className="text-xs text-slate-500">{tracking.weight_logs.length} weigh-in{tracking.weight_logs.length === 1 ? '' : 's'} recorded for this day.</p>
+                      <DailyTrackingEntries
+                        kind="weight" entries={tracking.weight_logs}
+                        editingId={editingWeightLogId} editValue={weightEditValue} setEditValue={setWeightEditValue}
+                        onStartEdit={entry => { setEditingWeightLogId(entry.id); setWeightEditValue(String(entry.weight_kg)); }}
+                        onCancelEdit={() => setEditingWeightLogId(null)} onSaveEdit={saveWeightEdit}
+                      />
                     </section>
                   </div>
 
@@ -1777,24 +1954,26 @@ export default function App() {
 
               {activeTab === 'coach' && (
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="coach-page max-w-3xl mx-auto flex flex-col">
+                  <div className="mb-3 px-4"><AIStatusIndicator status={ollamaStatus} loading={ollamaStatusLoading} onRefresh={refreshOllamaStatus} /></div>
                   <div className="flex-1 overflow-y-auto space-y-4 mb-6 px-4">
                     {chatMessages.map((msg, i) => (
                       <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[80%] p-4 rounded-2xl text-sm ${msg.role === 'user' ? 'bg-green-500 text-white rounded-tr-none shadow-md' : 'bg-white border border-slate-100 text-slate-800 rounded-tl-none shadow-sm'}`}>
+                        <div className={`max-w-[80%] p-4 rounded-2xl text-sm ${msg.role === 'user' ? 'bg-green-500 text-white rounded-tr-none shadow-md' : msg.role === 'error' ? 'bg-rose-500/10 border border-rose-400/20 text-rose-200 rounded-tl-none' : 'bg-white border border-slate-100 text-slate-800 rounded-tl-none shadow-sm'}`}>
+                          {msg.role === 'error' && <strong className="mb-1 block text-[10px] uppercase tracking-wider">AI connection issue</strong>}
                           {msg.text}
                         </div>
                       </div>
                     ))}
                     {chatLoading && <div className="flex items-center gap-3 px-4 py-2 text-sm text-slate-400" role="status" aria-live="polite"><span className="flex gap-1"><i className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce [animation-delay:-0.2s]"/><i className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce [animation-delay:-0.1s]"/><i className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce"/></span>Coach is replying…</div>}
                   </div>
-                  <div className="flex gap-3 p-3 bg-white rounded-full border border-slate-100 shadow-xl">
+                  <div className="coach-composer flex gap-3 p-3 bg-white rounded-full border border-slate-100 shadow-xl">
                     <input 
                       value={chatInput} 
                       onChange={e => setChatInput(e.target.value)}
                       onKeyDown={e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleChat())}
                       disabled={chatLoading}
                       placeholder="Ask your coach about nutrition or training..." 
-                      className="flex-1 bg-transparent px-4 py-2 text-sm outline-none"
+                      className="coach-composer-input flex-1 bg-transparent px-4 py-2 text-sm outline-none"
                     />
                     {chatLoading ? <button onClick={stopChat} aria-label="Stop AI response" className="shrink-0 px-5 h-12 rounded-full bg-rose-500 text-white text-sm font-bold hover:bg-rose-600 transition-colors shadow-lg shadow-rose-200">■ Stop</button> : <button onClick={handleChat} disabled={!chatInput.trim()} aria-label="Send message" className="bg-green-500 text-white w-12 h-12 rounded-full flex items-center justify-center font-bold hover:bg-green-600 transition-all shadow-lg shadow-green-200 disabled:opacity-40 disabled:shadow-none">↑</button>}
                   </div>
